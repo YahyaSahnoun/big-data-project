@@ -1,170 +1,209 @@
-name: bigdata-eligibilite-cluster
-
-x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.3-python3.11
-  environment: &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
-    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    # Pattern officiel Airflow pour ajouter des providers en dev/démo.
-    # En production : construire une image custom (voir README) plutôt que cet env var.
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-apache-spark==4.11.0 pyspark==3.5.1 mlflow==2.14.1"
-  volumes:
-    - ./airflow/dags:/opt/airflow/dags
-    - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/plugins:/opt/airflow/plugins
-    - ./spark/jobs:/opt/airflow/spark-jobs
-  networks:
-    - bigdata-net
-
-services:
-  # ------------------------------------------------------------------
-  # MASTER : plan de contrôle (métadonnées + orchestration uniquement)
-  # ------------------------------------------------------------------
-
-  postgres-airflow:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
-    volumes:
-      - postgres-airflow-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - bigdata-net
-
-  airflow-init:
-    <<: *airflow-common
-    depends_on:
-      postgres-airflow:
-        condition: service_healthy
-    entrypoint: /bin/bash
-    command:
-      - -c
-      - |
-        airflow db migrate
-        airflow users create \
-          --username admin --password admin \
-          --firstname Admin --lastname Admin \
-          --role Admin --email admin@example.com || true
-    restart: "no"
-
-  airflow-webserver:
-    <<: *airflow-common
-    command: webserver
-    ports:
-      - "8080:8080"
-    depends_on:
-      - airflow-init
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  airflow-scheduler:
-    <<: *airflow-common
-    command: scheduler
-    depends_on:
-      - airflow-init
-
-  # Nifi fait ici office de coordinateur de flux (rôle "master" au sens
-  # métadonnées/état des flux). Pour un vrai cluster Nifi multi-nœuds,
-  # il faut ajouter Zookeeper + les variables NIFI_CLUSTER_* (voir README).
-  nifi:
-    image: apache/nifi:1.27.0
-    environment:
-      SINGLE_USER_CREDENTIALS_USERNAME: admin
-      SINGLE_USER_CREDENTIALS_PASSWORD: ChangeMeNow123!
-      NIFI_WEB_HTTPS_PORT: "8443"
-    ports:
-      - "8443:8443"
-    volumes:
-      - nifi-data:/opt/nifi/nifi-current/data
-      - nifi-flowfile:/opt/nifi/nifi-current/flowfile_repository
-      - nifi-content:/opt/nifi/nifi-current/content_repository
-    networks:
-      - bigdata-net
-
-  spark-master:
-    build:
-      context: ./spark
-    command: ["/opt/bitnami/scripts/spark/run.sh"]
-    environment:
-      SPARK_MODE: master
-      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
-      SPARK_RPC_ENCRYPTION_ENABLED: "no"
-      SPARK_SSL_ENABLED: "no"
-    ports:
-      - "7077:7077"
-      - "8081:8080" # UI Spark Master (8080 déjà pris par Airflow)
-    networks:
-      - bigdata-net
-
-  mlflow:
-    build:
-      context: ./mlflow
-    command: >
-      mlflow server
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
-      --host 0.0.0.0 --port 5000
-    ports:
-      - "5000:5000"
-    volumes:
-      - mlflow-data:/mlflow
-    networks:
-      - bigdata-net
-
-  # ------------------------------------------------------------------
-  # WORKERS : calcul distribué (Spark Executors + stack ML)
-  # ------------------------------------------------------------------
-
-  spark-worker-1:
-    build:
-      context: ./spark
-    command: ["/opt/bitnami/scripts/spark/run.sh"]
-    environment:
-      SPARK_MODE: worker
-      SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_MEMORY: 2G
-      SPARK_WORKER_CORES: 2
-    volumes:
-      - ./spark/jobs:/opt/spark-jobs
-    depends_on:
-      - spark-master
-    networks:
-      - bigdata-net
-
-  spark-worker-2:
-    build:
-      context: ./spark
-    command: ["/opt/bitnami/scripts/spark/run.sh"]
-    environment:
-      SPARK_MODE: worker
-      SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_MEMORY: 2G
-      SPARK_WORKER_CORES: 2
-    volumes:
-      - ./spark/jobs:/opt/spark-jobs
-    depends_on:
-      - spark-master
-    networks:
-      - bigdata-net
+# ============================================================
+# Stack: NiFi -> MinIO (remplace HDFS) -> Spark -> Hive -> Power BI
+# Orchestration: Airflow
+# Optimisé pour une machine avec 16 Go RAM (15,8 Go utilisables)
+# Budget RAM approximatif: ~9 Go pour les conteneurs, reste pour l'OS/Docker Desktop
+# ============================================================
 
 networks:
-  bigdata-net:
+  pipeline-net:
     driver: bridge
 
 volumes:
-  postgres-airflow-data:
+  minio-data:
+  postgres-data:
   nifi-data:
-  nifi-flowfile:
-  nifi-content:
-  mlflow-data:
+  spark-data:
+
+services:
+
+  # -----------------------------------------------------
+  # MinIO - stockage objet S3-compatible (remplace HDFS)
+  # -----------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Console web
+    volumes:
+      - minio-data:/data
+    networks:
+      - pipeline-net
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Crée automatiquement les buckets nécessaires au démarrage
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb -p local/raw-data;
+      mc mb -p local/processed-data;
+      mc mb -p local/ml-scoring;
+      exit 0;
+      "
+    networks:
+      - pipeline-net
+
+  # -----------------------------------------------------
+  # Postgres - backend pour Hive metastore + Airflow
+  # FIX: POSTGRES_MULTIPLE_DATABASES ne fonctionne pas sans
+  # script d'init monté -> voir ./pg-init-scripts/init-multiple-dbs.sh
+  # -----------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: "hive_metastore,airflow"
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./pg-init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - pipeline-net
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # -----------------------------------------------------
+  # Hive Metastore - catalogue de tables pointant vers MinIO
+  # -----------------------------------------------------
+  hive-metastore:
+    image: bitsondatadev/hive-metastore:latest
+    container_name: hive-metastore
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      METASTORE_DB_HOSTNAME: postgres
+      HIVE_METASTORE_DB_TYPE: postgres
+      HIVE_METASTORE_URI: postgresql://admin:admin123@postgres:5432/hive_metastore
+      # Config S3A pour pointer vers MinIO au lieu de HDFS
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      S3_PATH_STYLE_ACCESS: "true"
+    ports:
+      - "9083:9083"
+    networks:
+      - pipeline-net
+    mem_limit: 1g
+
+  # -----------------------------------------------------
+  # Spark - master + 1 worker (image officielle Apache)
+  # FIX: chemin relatif "bin/spark-class" invalide car le WORKDIR
+  # de cette image est /opt/spark/work-dir -> chemin absolu requis
+  # -----------------------------------------------------
+  spark-master:
+    image: apache/spark:3.5.1
+    container_name: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
+      SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
+      SPARK_HADOOP_FS_S3A_IMPL: org.apache.hadoop.fs.s3a.S3AFileSystem
+    ports:
+      - "8080:8080"   # UI Spark master
+      - "7077:7077"   # Port master
+    volumes:
+      - spark-data:/opt/spark/work-dir
+    networks:
+      - pipeline-net
+    mem_limit: 1g
+
+  spark-worker:
+    image: apache/spark:3.5.1
+    container_name: spark-worker-1
+    depends_on:
+      - spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "-c", "2", "-m", "1500M"]
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
+      SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
+    networks:
+      - pipeline-net
+    mem_limit: 2g
+
+  # -----------------------------------------------------
+  # NiFi - ingestion vers MinIO
+  # -----------------------------------------------------
+  nifi:
+    image: apache/nifi:1.27.0
+    container_name: nifi
+    environment:
+      NIFI_WEB_HTTP_PORT: 8443
+      SINGLE_USER_CREDENTIALS_USERNAME: admin
+      SINGLE_USER_CREDENTIALS_PASSWORD: admin12345678
+    ports:
+      - "8443:8443"
+    volumes:
+    - nifi-data:/opt/nifi/nifi-current/conf
+    - ~/Desktop/data_clients:/data/clients:ro   # <-- add this, adjust the left-hand path
+ 
+    networks:
+      - pipeline-net
+    mem_limit: 2g
+
+  # -----------------------------------------------------
+  # Airflow - orchestrateur (webserver + scheduler)
+  # -----------------------------------------------------
+  airflow-webserver:
+    image: apache/airflow:2.9.1
+    container_name: airflow-webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://admin:admin123@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com || true &&
+      airflow webserver"
+    ports:
+      - "8081:8080"
+    networks:
+      - pipeline-net
+    mem_limit: 1g
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.1
+    container_name: airflow-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-webserver:
+        condition: service_started
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://admin:admin123@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: scheduler
+    networks:
+      - pipeline-net
+    mem_limit: 1g
