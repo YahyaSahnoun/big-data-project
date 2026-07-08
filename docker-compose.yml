@@ -128,6 +128,7 @@ services:
       - "8080:8080"   # UI Spark master
       - "7077:7077"   # Port master
     volumes:
+      - ./analyse_data:/workspace
       - spark-data:/opt/spark/work-dir
     networks:
       - pipeline-net
