@@ -1,0 +1,46 @@
+{
+  "solde_moyen": {
+    "min": -47414.335625,
+    "max": 79296.34937499999
+  },
+  "solde_min": {
+    "min": -4270.19,
+    "max": 4078.6099999999997
+  },
+  "solde_max": {
+    "min": -170523.935,
+    "max": 291488.425
+  },
+  "depot_moyen": {
+    "min": -100695.88831428572,
+    "max": 169849.80242857145
+  },
+  "flux_cred_moyen": {
+    "min": -26545.42730769231,
+    "max": 45750.99423076923
+  },
+  "flux_cred_total": {
+    "min": -419138.805,
+    "max": 719364.675
+  },
+  "montant_total_gab": {
+    "min": 0.0,
+    "max": 0.0
+  },
+  "montant_moyen_gab": {
+    "min": 0.0,
+    "max": 0.0
+  },
+  "montant_total_retraits": {
+    "min": -94200.0,
+    "max": 157000.0
+  },
+  "montant_total_payfac": {
+    "min": -2411.3999999999996,
+    "max": 4018.9999999999995
+  },
+  "montant_total_vignette": {
+    "min": 0.0,
+    "max": 0.0
+  }
+}
