@@ -42,5 +42,9 @@
   "montant_total_vignette": {
     "min": -2450.0,
     "max": 5950.0
+  },
+  "nb_operations_gab": {
+    "min": -22.5,
+    "max": 37.5
   }
 }
