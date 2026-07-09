@@ -24,23 +24,23 @@
     "max": 719364.675
   },
   "montant_total_gab": {
-    "min": 0.0,
-    "max": 0.0
+    "min": -2013.25,
+    "max": 3456.75
   },
   "montant_moyen_gab": {
-    "min": 0.0,
-    "max": 0.0
+    "min": -94.88246268656717,
+    "max": 159.7294776119403
   },
   "montant_total_retraits": {
     "min": -94200.0,
     "max": 157000.0
   },
   "montant_total_payfac": {
-    "min": -2411.3999999999996,
-    "max": 4018.9999999999995
+    "min": -22821.649999999998,
+    "max": 43440.43
   },
   "montant_total_vignette": {
-    "min": 0.0,
-    "max": 0.0
+    "min": -2450.0,
+    "max": 5950.0
   }
 }
