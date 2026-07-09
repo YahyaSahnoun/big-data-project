@@ -88,45 +88,7 @@ vignette_2 = read_csv("ATT_PROD_EPARGNE_VIGNETTE_COMPLEMENT*.txt")
 print(f"PERIMETRE : {perimetre.count()} lignes, "
       f"{perimetre.select('RADICAL').distinct().count()} RADICAL distincts")
 
-# À insérer juste après l'ÉTAPE 0 (chargement des fichiers bruts),
-# avant l'ÉTAPE 1, en utilisant directement gab_1, gab_2, retrait_1,
-# retrait_2 déjà chargés depuis MinIO.
 
-print("\n" + "=" * 20 + " INVESTIGATION GAB vs RETRAIT " + "=" * 20)
-
-# 1) Comparer les plages de dates couvertes par chaque fichier
-for nom, df in [("gab_1 (GAB2023)", gab_1), ("gab_2 (GAB_COMPLEMENT)", gab_2),
-                 ("retrait_1 (RETRAIT2023)", retrait_1), ("retrait_2 (RETRAIT_COMPLEMENT)", retrait_2)]:
-    if "DATE_OP" in df.columns:
-        print(f"\n{nom} :")
-        df.select(F.min("DATE_OP").alias("date_min"), F.max("DATE_OP").alias("date_max"),
-                   F.count("*").alias("nb_lignes")).show(truncate=False)
-    else:
-        print(f"\n{nom} : pas de colonne DATE_OP, colonnes disponibles :")
-        print(df.columns)
-
-# 2) Comparer la population de clients couverte par chaque source
-gab_union_tmp = gab_1.unionByName(gab_2, allowMissingColumns=True)
-retrait_union_tmp = retrait_1.unionByName(retrait_2, allowMissingColumns=True)
-
-print(f"\nRADICAL distincts dans gab_union : {gab_union_tmp.select('RADICAL').distinct().count()}")
-print(f"RADICAL distincts dans retrait_union : {retrait_union_tmp.select('RADICAL').distinct().count()}")
-
-# 3) Vérifier si CODE_FONCT existe dans les fichiers GAB (permettrait de
-#    dériver nb_retraits directement depuis gab_union, comme le décrit
-#    le guide, plutôt que de dépendre d'un fichier RETRAIT séparé)
-if "CODE_FONCT" in gab_union_tmp.columns:
-    print("\nCODE_FONCT trouvé dans gab_union -- distribution :")
-    gab_union_tmp.groupBy("CODE_FONCT").count().orderBy(F.desc("count")).show()
-else:
-    print("\nCODE_FONCT absent de gab_union -- colonnes réellement disponibles :")
-    print(gab_union_tmp.columns)
-
-# 4) Un client présent dans RETRAIT mais absent de GAB ? (impossible si
-#    RETRAIT est un vrai sous-ensemble de GAB)
-radicaux_gab = gab_union_tmp.select("RADICAL").distinct()
-radicaux_retrait_only = retrait_union_tmp.select("RADICAL").distinct().subtract(radicaux_gab)
-print(f"\nClients présents dans RETRAIT mais absents de GAB : {radicaux_retrait_only.count()}")
 # ============================================================
 # ÉTAPE 1 — Vérification + correction : unicité de RADICAL sur PERIMETRE
 # ============================================================
