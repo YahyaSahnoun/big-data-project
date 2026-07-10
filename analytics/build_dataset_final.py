@@ -31,6 +31,19 @@ spark.sparkContext.setLogLevel("WARN")
 
 RAW = "s3a://raw-data/"
 
+# ============================================================
+# DATE DE RÉFÉRENCE — dérivée du nom des fichiers les plus récents
+# ============================================================
+# Les données couvrent plusieurs années (fichiers suffixés _2023/_2024/_2025,
+# ex. OPK2025, SOLDE_2025, FLUX_2025). Utiliser current_date() pour calculer
+# un âge n'aurait aucun sens : la date d'exécution du script (aujourd'hui)
+# n'a aucun lien avec la période réellement observée dans les données.
+# On fixe donc une date de référence unique, dérivée de l'année la plus
+# récente présente dans les noms de fichiers, réutilisée pour TOUT calcul
+# d'âge/ancienneté dans le script (une seule source de vérité).
+ANNEE_REFERENCE = 2025  # <-- année du suffixe le plus récent (OPK2025 / SOLDE_2025 / FLUX_2025)
+DATE_REFERENCE = F.to_date(F.lit(f"31/12/{ANNEE_REFERENCE}"), "dd/MM/yyyy")
+
 
 def read_csv(pattern):
     """Lit un ou plusieurs fichiers bruts (sep=';', encodage latin1)."""
@@ -87,6 +100,12 @@ vignette_2 = read_csv("ATT_PROD_EPARGNE_VIGNETTE_COMPLEMENT*.txt")
 
 print(f"PERIMETRE : {perimetre.count()} lignes, "
       f"{perimetre.select('RADICAL').distinct().count()} RADICAL distincts")
+
+# --- Âge du client, calculé par rapport à DATE_REFERENCE (pas current_date()) ---
+perimetre = perimetre.withColumn(
+    "age_client",
+    F.floor(F.datediff(DATE_REFERENCE, F.to_date("DATE_OF_BIRTH", "dd/MM/yyyy")) / 365.25)
+)
 
 
 # ============================================================
@@ -355,7 +374,7 @@ print(f"Clients sans produit connu (population à scorer)      : {clients_a_scor
 # ============================================================
 # ÉTAPE 7 — Écriture dans processed-data (entrée de la section 7 du guide)
 # ============================================================
-#clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
+clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
 clients_a_scorer.write.mode("overwrite").parquet("s3a://processed-data/dataset_a_scorer/")
 
 print("\nTerminé. Fichiers écrits dans processed-data/dataset_train_produits/ "
