@@ -355,7 +355,7 @@ print(f"Clients sans produit connu (population à scorer)      : {clients_a_scor
 # ============================================================
 # ÉTAPE 7 — Écriture dans processed-data (entrée de la section 7 du guide)
 # ============================================================
-clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
+#clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
 clients_a_scorer.write.mode("overwrite").parquet("s3a://processed-data/dataset_a_scorer/")
 
 print("\nTerminé. Fichiers écrits dans processed-data/dataset_train_produits/ "
