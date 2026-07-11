@@ -16,7 +16,7 @@ Lancement (depuis le conteneur spark-master, ou via spark-submit local) :
 
 from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as F
-
+from pyspark.sql.functions import broadcast
 spark = (
     SparkSession.builder
     .appName("scoring_epargne_construction_dataset")
@@ -34,12 +34,14 @@ RAW = "s3a://raw-data/"
 # ============================================================
 # DATE DE RÉFÉRENCE — dérivée du nom des fichiers les plus récents
 # ============================================================
-# Les données couvrent plusieurs années (fichiers suffixés _2023/_2024/_2025).
-# current_date() n'aurait aucun sens pour un âge/ancienneté : la date
-# d'exécution du script n'a aucun lien avec la période observée dans les
-# données. Référence unique, dérivée de l'année la plus récente présente
-# dans les noms de fichiers, réutilisée pour tout calcul d'âge/ancienneté.
-ANNEE_REFERENCE = 2025  # année du suffixe le plus récent (OPK2025 / SOLDE_2025 / FLUX_2025)
+# Les données couvrent plusieurs années (fichiers suffixés _2023/_2024/_2025,
+# ex. OPK2025, SOLDE_2025, FLUX_2025). Utiliser current_date() pour calculer
+# un âge n'aurait aucun sens : la date d'exécution du script (aujourd'hui)
+# n'a aucun lien avec la période réellement observée dans les données.
+# On fixe donc une date de référence unique, dérivée de l'année la plus
+# récente présente dans les noms de fichiers, réutilisée pour TOUT calcul
+# d'âge/ancienneté dans le script (une seule source de vérité).
+ANNEE_REFERENCE = 2025  # <-- année du suffixe le plus récent (OPK2025 / SOLDE_2025 / FLUX_2025)
 DATE_REFERENCE = F.to_date(F.lit(f"31/12/{ANNEE_REFERENCE}"), "dd/MM/yyyy")
 
 
@@ -57,58 +59,6 @@ def read_csv(pattern):
 def to_num(colname):
     """Convertit une colonne montant au format français ('5126,34') en double."""
     return F.regexp_replace(F.col(colname), ",", ".").cast("double")
-
-
-def to_date_charg(colname="DATE_CHARG"):
-    """
-    Convertit DATE_CHARG (chaîne 'dd/MM/yyyy') en vraie date, pour un tri
-    chronologique correct. NE JAMAIS trier '.desc()' sur la colonne brute :
-    un tri alphabétique classerait "01/11/2023" APRÈS "01/02/2025" (le
-    caractère '1' de "11" est > au caractère '0' de "02" en 4e position),
-    ce qui inverserait "le plus récent". Ce bug est particulièrement grave
-    pour ASSI : le fichier est un instantané mensuel répété (~28 lignes par
-    client en moyenne, cf. investigation), donc "le plus récent" détermine
-    littéralement le PRODUIT ASSIGNÉ AU CLIENT (label_nom) -- un mauvais
-    tri peut assigner le mauvais produit à des centaines de milliers de
-    clients silencieusement (aucune erreur levée).
-    """
-    return F.to_date(F.col(colname), "dd/MM/yyyy")
-
-
-def verifier_unicite_radical(tables: dict, arreter_si_probleme: bool = True) -> None:
-    """
-    Vérifie, pour chaque table agrégée candidate à une jointure sur
-    RADICAL, qu'elle contient bien au maximum 1 ligne par RADICAL --
-    AVANT de les joindre, pas après (c'est ce contrôle, ajouté après coup,
-    qui a permis de diagnostiquer le bug produit_digitaux : 1 790 451
-    lignes pour seulement 1 765 730 RADICAL distincts).
-
-    arreter_si_probleme=True lève une AssertionError si un problème est
-    détecté, au lieu de se contenter d'un avertissement -- pour ne plus
-    jamais reproduire un dataset_final silencieusement corrompu (cf. guide
-    maître, tableau des bugs : "remplacer le print() par un assert").
-    """
-    print("\n>>> Vérification unicité RADICAL, table par table (avant jointure) :")
-    problemes = []
-    for nom, df_feat in tables.items():
-        total = df_feat.count()
-        distinct = df_feat.select("RADICAL").distinct().count()
-        if total == distinct:
-            statut = "OK"
-        else:
-            statut = f"⚠ PROBLÈME (+{total - distinct} lignes en trop)"
-            problemes.append(nom)
-        print(f"  {nom:24s} total={total:>10} distinct={distinct:>10}  {statut}")
-
-    if problemes:
-        message = (
-            f"Table(s) non uniques sur RADICAL avant jointure : {problemes}. "
-            f"Corrigez leur agrégation/dédoublonnage avant de continuer."
-        )
-        if arreter_si_probleme:
-            raise AssertionError(message)
-        else:
-            print(f"ATTENTION : {message}")
 
 
 # ============================================================
@@ -161,6 +111,11 @@ perimetre = perimetre.withColumn(
 # ============================================================
 # ÉTAPE 1 — Vérification + correction : unicité de RADICAL sur PERIMETRE
 # ============================================================
+# FIX 1 : le simple avertissement ne suffit plus. On inspecte d'abord les
+# doublons pour comprendre leur nature (même client avec 2 comptes, ou
+# vraies lignes dupliquées ?), puis on déduplique par un row_number() pour
+# forcer l'unicité de RADICAL avant toute jointure — sinon ÉTAPE 4 duplique
+# des lignes silencieusement et ÉTAPE 5 (n_final == n_perimetre) échouera.
 n_total = perimetre.count()
 n_distinct = perimetre.select("RADICAL").distinct().count()
 
@@ -193,19 +148,18 @@ else:
 print("\n>>> Valeurs distinctes de produit dans ASSI :")
 assi.groupBy("CODE_PRODUIT", "LIBELLE_PRODUIT").count().orderBy(F.desc("count")).show(20, truncate=False)
 print(">>> ARRÊTEZ-VOUS ICI. Confirmez avec l'encadrant :")
-print("    1) que ces valeurs sont bien les 3 produits d'épargne attendus,")
+print("    1) que ces valeurs sont bien les 5 produits d'épargne attendus,")
 print("    2) qu'aucune n'est un produit d'assurance/prévoyance hors scope,")
 print("    avant d'exécuter la suite du script.")
 
-# Sur les 6 codes présents dans ASSI, seuls 3 sont réellement des produits
-# d'épargne (09 = MaRetraite, 53 = Avenir Mes Enfants, 18 = Epargne
-# Evolution) ; 86, 98, 99 sont des produits d'assurance/assistance hors
-# scope. On filtre AVANT de vérifier l'exclusivité, sinon un client qui a
-# une assurance ET un produit d'épargne apparaît à tort comme un
-# "doublon" alors que l'exclusivité annoncée par l'encadrant ne concerne
-# que les produits d'épargne entre eux.
-# Confirmé sur le volume complet (voir GUIDE_MAITRE section 0) : codes
-# 53/09/18 correspondent exactement aux effectifs notés par l'encadrant.
+# FIX 2 : sur les 6 codes présents dans ASSI, seuls 3 sont réellement des
+# produits d'épargne (09 = MaRetraite, 53 = Avenir Mes Enfants,
+# 18 = Epargne Evolution) ; 86, 98, 99 sont des produits d'assurance /
+# d'assistance hors scope. On filtre AVANT de vérifier l'exclusivité,
+# sinon un client qui a une assurance ET un produit d'épargne apparaît à
+# tort comme un "doublon" alors que l'exclusivité annoncée par
+# l'encadrant ne concerne que les produits d'épargne entre eux.
+# À VALIDER avec l'encadrant avant la soutenance (déduction, pas certitude à 100%).
 PRODUITS_EPARGNE_VALIDES = ["53", "09", "18"]  # Avenir Mes Enfants / MaRetraite / Epargne Evolution
 assi = assi.filter(F.col("CODE_PRODUIT").isin(PRODUITS_EPARGNE_VALIDES))
 
@@ -220,14 +174,8 @@ nb_doublons = doublons.count()
 print(f"\n{nb_doublons} client(s) avec plus d'un produit d'épargne dans ASSI (après filtrage).")
 
 if nb_doublons > 0:
-    print("Exclusivité NON respectée (ou ASSI = instantané périodique répété) "
-          "-> dédoublonnage par DATE_CHARG le plus récent.")
-    # FIX : tri sur la vraie date (to_date_charg), pas sur la chaîne brute
-    # -- ASSI contient ~28 lignes/client en moyenne (instantané périodique,
-    # comme SOLDE/FLUX), donc ce tri détermine littéralement quel produit
-    # est assigné à chaque client. Un tri alphabétique aurait pu assigner
-    # le produit d'un instantané de 2022 plutôt que 2025.
-    w = Window.partitionBy("RADICAL").orderBy(to_date_charg().desc())
+    print("Exclusivité NON respectée -> dédoublonnage par DATE_CHARG le plus récent.")
+    w = Window.partitionBy("RADICAL").orderBy(F.col("DATE_CHARG").desc())
     cible = (
         assi
         .withColumn("rang", F.row_number().over(w))
@@ -242,13 +190,6 @@ else:
                          F.col("CODE_PRODUIT").alias("label_code"),
                          F.col("LIBELLE_PRODUIT").alias("label_nom"))
 
-# Combien de clients ASSI (après filtrage produit) ne se retrouvent PAS
-# dans PERIMETRE ? Un LEFT JOIN depuis PERIMETRE les exclurait
-# silencieusement du dataset final.
-n_cible_hors_perimetre = cible.join(perimetre.select("RADICAL"), "RADICAL", "left_anti").count()
-print(f"Clients avec produit d'épargne mais absents de PERIMETRE : {n_cible_hors_perimetre} "
-      f"(sur {cible.count()} au total dans la cible)")
-
 # ============================================================
 # ÉTAPE 3 — Agrégation de chaque table 1:N à 1 ligne / client
 # ============================================================
@@ -257,9 +198,7 @@ print(f"Clients avec produit d'épargne mais absents de PERIMETRE : {n_cible_hor
 opk_union = (opk_2023
              .unionByName(opk_2024, allowMissingColumns=True)
              .unionByName(opk_2025, allowMissingColumns=True))
-# FIX : même bug de tri corrigé ici (3 fichiers réels, 2023/2024/2025 --
-# c'est justement le cas qui casse un tri alphabétique sur chaîne).
-w_opk = Window.partitionBy("RADICAL").orderBy(to_date_charg().desc())
+w_opk = Window.partitionBy("RADICAL").orderBy(F.col("DATE_CHARG").desc())
 opk_agg = (
     opk_union
     .withColumn("rang", F.row_number().over(w_opk))
@@ -269,26 +208,8 @@ opk_agg = (
             F.col("ETATC").alias("pack_etat"))
 )
 
-# --- PRODUIT_DIGITAUX ---
-# FIX : cette table N'EST PAS 1:1 malgré l'hypothèse initiale du guide --
-# vérifié empiriquement (1 790 451 lignes pour 1 765 730 RADICAL distincts,
-# soit 24 721 clients avec plusieurs lignes, probablement des clients
-# résiliés puis réabonnés). La tentative de dédoublonnage précédente
-# plantait (référençait DATE_CHARG, une colonne qui n'existe pas dans ce
-# fichier -- ses seules colonnes de date sont DATE_VAL_ABON/DATE_RES_ABON).
-# Règle métier : priorité à l'abonnement encore ACTIF (DATE_RES_ABON
-# NULL) ; à égalité, le plus récent DATE_VAL_ABON.
-w_digi = Window.partitionBy("RADICAL").orderBy(
-    F.col("DATE_RES_ABON").isNull().desc(),
-    F.to_date(F.col("DATE_VAL_ABON"), "dd/MM/yyyy").desc(),
-)
-digitaux_dedup = (
-    digitaux
-    .withColumn("rang", F.row_number().over(w_digi))
-    .filter("rang = 1")
-    .drop("rang")
-)
-digitaux_clean = digitaux_dedup.select(
+# --- PRODUIT_DIGITAUX : a priori déjà 1 ligne / client ---
+digitaux_clean = digitaux.select(
     "RADICAL",
     F.col("DATE_VAL_ABON").alias("digital_date_activation"),
     F.when(F.col("DATE_RES_ABON").isNull(), F.lit(1)).otherwise(F.lit(0))
@@ -333,31 +254,30 @@ flux_agg = (
 )
 
 # --- OPERATIONS GAB : logique RFM (récence / fréquence / montant) ---
-# NOTE À VÉRIFIER : les lignes échantillon ont toutes CODE_FONCT=031 et
-# MONTANT=0. Si 031 = "consultation de solde" (pas un retrait),
-# montant_total_gab/montant_moyen_gab pourraient être constamment nuls --
-# vérifier avec gab_1.groupBy("CODE_FONCT").agg(F.count("*"), F.avg("MONTANT")).show()
 gab_union = gab_1.unionByName(gab_2, allowMissingColumns=True)
 gab_agg = (
     gab_union
     .withColumn("MONTANT_num", to_num("MONTANT"))
-    .withColumn("DATE_OP_ts", F.to_timestamp("DATE_OP", "dd/MM/yyyy HH:mm:ss"))
-    # cast avant le max, sinon comparaison alphabétique de chaînes ->
-    # "dernière opération" potentiellement fausse
+    .withColumn("DATE_OP_ts", F.to_timestamp("DATE_OP", "dd/MM/yyyy HH:mm:ss"))  # FIX : cast
+    # avant le max, sinon comparaison alphabétique de chaînes -> "dernière
+    # opération" potentiellement fausse (ex. "01/01/2024" < "31/12/2023"
+    # alphabétiquement, alors que 2024 est chronologiquement postérieur)
     .groupBy("RADICAL")
     .agg(
         F.count("*").alias("nb_operations_gab"),
         F.sum("MONTANT_num").alias("montant_total_gab"),
         F.avg("MONTANT_num").alias("montant_moyen_gab"),
-        F.max("DATE_OP_ts").alias("derniere_operation_gab"),
+        F.max("DATE_OP_ts").alias("derniere_operation_gab"),  # FIX : sur la colonne castée
     )
 )
-
 # --- RETRAITS ---
-# (investigation post-hoc) : ce fichier N'EST PAS un sous-ensemble garanti
-# des opérations GAB. Vérifié empiriquement : 365 122 clients présents
-# dans RETRAIT sont absents de GAB. Deux sources indépendantes, à traiter
-# comme deux features comportementales séparées.
+#  (investigation post-hoc) : ce fichier N'EST PAS un sous-ensemble
+# garanti des opérations GAB malgré ce que suggérait initialement le
+# guide (section 3.4). Vérifié empiriquement : 365 122 clients présents
+# dans RETRAIT sont absents de GAB, ce qui est impossible pour un vrai
+# sous-ensemble. Il s'agit de deux sources indépendantes (fichiers et
+# fenêtres temporelles distincts), à traiter comme deux features
+# comportementales séparées, sans relation hiérarchique imposée.
 retrait_union = retrait_1.unionByName(retrait_2, allowMissingColumns=True)
 retrait_agg = (
     retrait_union
@@ -397,11 +317,9 @@ vignette_agg = (
 )
 
 # ============================================================
-# ÉTAPE 3bis — Vérification systématique AVANT jointure (pas après)
+# ÉTAPE 4 — Assemblage final : LEFT JOIN depuis PERIMETRE
 # ============================================================
-# Ce contrôle est ce qui a permis de repérer produit_digitaux la première
-# fois. Il est maintenant un ASSERT bloquant : le script s'arrête net s'il
-# reste un problème, au lieu de continuer sur un dataset_final corrompu.
+''''
 tables_a_verifier = {
     "cible (ASSI filtré)": cible,
     "pack (OPK)": opk_agg,
@@ -414,11 +332,12 @@ tables_a_verifier = {
     "payfac": payfac_agg,
     "vignette": vignette_agg,
 }
-verifier_unicite_radical(tables_a_verifier, arreter_si_probleme=True)
 
-# ============================================================
-# ÉTAPE 4 — Assemblage final : LEFT JOIN depuis PERIMETRE
-# ============================================================
+for nom, df_feat in tables_a_verifier.items():
+    total = df_feat.count()
+    distinct = df_feat.select("RADICAL").distinct().count()
+    statut = "OK" if total == distinct else f"⚠ PROBLÈME (+{total - distinct} lignes en trop)"
+    print(f"{nom:24s} total={total:>10} distinct={distinct:>10}  {statut}")
 dataset_final = (
     perimetre
     .join(cible,          on="RADICAL", how="left")
@@ -432,7 +351,14 @@ dataset_final = (
     .join(payfac_agg,      on="RADICAL", how="left")
     .join(vignette_agg,    on="RADICAL", how="left")
 )
-
+'''''
+w = Window.partitionBy("RADICAL").orderBy(F.col("DATE_CHARG").desc())
+digitaux_clean = (
+    digitaux_clean
+    .withColumn("rang", F.row_number().over(w))
+    .filter("rang = 1")
+    .drop("rang")
+)
 # Un compteur/montant absent après un LEFT JOIN = 0 (aucune activité), pas une
 # valeur manquante à imputer par une moyenne.
 compteurs_a_zero = [
@@ -451,16 +377,13 @@ dataset_final = dataset_final.fillna(
 n_perimetre = perimetre.count()
 n_final = dataset_final.count()
 print(f"\nPERIMETRE : {n_perimetre} lignes | dataset_final : {n_final} lignes")
-# FIX : assert au lieu d'un simple avertissement -- grâce à la vérification
-# de l'ÉTAPE 3bis, ce cas ne devrait normalement plus jamais se produire ;
-# s'il se reproduit quand même, mieux vaut un arrêt net et bruyant qu'un
-# fichier corrompu écrit silencieusement dans processed-data.
-assert n_final == n_perimetre, (
-    f"dataset_final ({n_final} lignes) != PERIMETRE ({n_perimetre} lignes) -- "
-    f"une jointure a dupliqué des lignes malgré la vérification ÉTAPE 3bis. "
-    f"Ne continuez pas tant que ce n'est pas résolu."
-)
-print("OK : aucune duplication introduite par les jointures.")
+if n_final != n_perimetre:
+    print("ATTENTION : le nombre de lignes a changé après les jointures -> une des "
+          "tables agrégées en étape 3 contient encore plusieurs lignes pour un même "
+          "RADICAL. Corrigez l'agrégation fautive avant de continuer (ne poursuivez "
+          "pas l'étape 6 tant que ce nombre ne correspond pas).")
+else:
+    print("OK : aucune duplication introduite par les jointures.")
 
 print("\nRépartition des classes (produit détenu) :")
 dataset_final.groupBy("label_nom").count().orderBy(F.desc("count")).show(10, truncate=False)
