@@ -31,19 +31,6 @@ spark.sparkContext.setLogLevel("WARN")
 
 RAW = "s3a://raw-data/"
 
-# ============================================================
-# DATE DE RÉFÉRENCE — dérivée du nom des fichiers les plus récents
-# ============================================================
-# Les données couvrent plusieurs années (fichiers suffixés _2023/_2024/_2025,
-# ex. OPK2025, SOLDE_2025, FLUX_2025). Utiliser current_date() pour calculer
-# un âge n'aurait aucun sens : la date d'exécution du script (aujourd'hui)
-# n'a aucun lien avec la période réellement observée dans les données.
-# On fixe donc une date de référence unique, dérivée de l'année la plus
-# récente présente dans les noms de fichiers, réutilisée pour TOUT calcul
-# d'âge/ancienneté dans le script (une seule source de vérité).
-ANNEE_REFERENCE = 2025  # <-- année du suffixe le plus récent (OPK2025 / SOLDE_2025 / FLUX_2025)
-DATE_REFERENCE = F.to_date(F.lit(f"31/12/{ANNEE_REFERENCE}"), "dd/MM/yyyy")
-
 
 def read_csv(pattern):
     """Lit un ou plusieurs fichiers bruts (sep=';', encodage latin1)."""
@@ -100,12 +87,6 @@ vignette_2 = read_csv("ATT_PROD_EPARGNE_VIGNETTE_COMPLEMENT*.txt")
 
 print(f"PERIMETRE : {perimetre.count()} lignes, "
       f"{perimetre.select('RADICAL').distinct().count()} RADICAL distincts")
-
-# --- Âge du client, calculé par rapport à DATE_REFERENCE (pas current_date()) ---
-perimetre = perimetre.withColumn(
-    "age_client",
-    F.floor(F.datediff(DATE_REFERENCE, F.to_date("DATE_OF_BIRTH", "dd/MM/yyyy")) / 365.25)
-)
 
 
 # ============================================================
@@ -300,7 +281,7 @@ payfac_agg = (
     .agg(
         F.count("*").alias("nb_paiements_digitaux"),
         F.sum("MONTANT_num").alias("montant_total_payfac"),
-    )
+    ) 
 )
 
 # --- VIGNETTE (0..N lignes / client) ---
@@ -319,46 +300,20 @@ vignette_agg = (
 # ============================================================
 # ÉTAPE 4 — Assemblage final : LEFT JOIN depuis PERIMETRE
 # ============================================================
-# ''''
-# tables_a_verifier = {
-#     "cible (ASSI filtré)": cible,
-#     "pack (OPK)": opk_agg,
-#     "produit_digitaux": digitaux_clean,
-#     "solde": solde_agg,
-#     "depot_bilanciel": depot_agg,
-#     "flux": flux_agg,
-#     "gab": gab_agg,
-#     "retrait": retrait_agg,
-#     "payfac": payfac_agg,
-#     "vignette": vignette_agg,
-# }
-
-# for nom, df_feat in tables_a_verifier.items():
-#     total = df_feat.count()
-#     distinct = df_feat.select("RADICAL").distinct().count()
-#     statut = "OK" if total == distinct else f"⚠ PROBLÈME (+{total - distinct} lignes en trop)"
-#     print(f"{nom:24s} total={total:>10} distinct={distinct:>10}  {statut}")
-# dataset_final = (
-#     perimetre
-#     .join(cible,          on="RADICAL", how="left")
-#     .join(opk_agg,         on="RADICAL", how="left")
-#     .join(digitaux_clean,  on="RADICAL", how="left")
-#     .join(solde_agg,       on="RADICAL", how="left")
-#     .join(depot_agg,       on="RADICAL", how="left")
-#     .join(flux_agg,        on="RADICAL", how="left")
-#     .join(gab_agg,         on="RADICAL", how="left")
-#     .join(retrait_agg,     on="RADICAL", how="left")
-#     .join(payfac_agg,      on="RADICAL", how="left")
-#     .join(vignette_agg,    on="RADICAL", how="left")
-# )
-# '''''
-w = Window.partitionBy("RADICAL").orderBy(F.col("DATE_CHARG").desc())
-digitaux_clean = (
-    digitaux_clean
-    .withColumn("rang", F.row_number().over(w))
-    .filter("rang = 1")
-    .drop("rang")
+dataset_final = (
+    perimetre
+    .join(cible,          on="RADICAL", how="left")
+    .join(opk_agg,         on="RADICAL", how="left")
+    .join(digitaux_clean,  on="RADICAL", how="left")
+    .join(solde_agg,       on="RADICAL", how="left")
+    .join(depot_agg,       on="RADICAL", how="left")
+    .join(flux_agg,        on="RADICAL", how="left")
+    .join(gab_agg,         on="RADICAL", how="left")
+    .join(retrait_agg,     on="RADICAL", how="left")
+    .join(payfac_agg,      on="RADICAL", how="left")
+    .join(vignette_agg,    on="RADICAL", how="left")
 )
+
 # Un compteur/montant absent après un LEFT JOIN = 0 (aucune activité), pas une
 # valeur manquante à imputer par une moyenne.
 compteurs_a_zero = [
@@ -400,7 +355,7 @@ print(f"Clients sans produit connu (population à scorer)      : {clients_a_scor
 # ============================================================
 # ÉTAPE 7 — Écriture dans processed-data (entrée de la section 7 du guide)
 # ============================================================
-clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
+#clients_avec_label.write.mode("overwrite").parquet("s3a://processed-data/dataset_train_produits/")
 clients_a_scorer.write.mode("overwrite").parquet("s3a://processed-data/dataset_a_scorer/")
 
 print("\nTerminé. Fichiers écrits dans processed-data/dataset_train_produits/ "

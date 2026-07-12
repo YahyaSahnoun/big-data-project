@@ -21,7 +21,7 @@ files = [f.getPath().toString() for f in fs.listStatus(path) if not f.isDirector
 print(f"\n>>> {len(files)} fichiers détectés dans S3\n")
 for f in files:  # la liste déjà utilisée dans discover_files.py
     df_tmp = spark.read.option("header", "true").option("sep", ";").csv(f)
-    cols_matching = [c for c in df_tmp.columns if "OUV" in c.upper()]
+    cols_matching = [c for c in df_tmp.columns if "CREATE" in c.upper()]
     if cols_matching:
         print(f"{f.split('/')[-1]} : {cols_matching}")
 for f in sorted(files):
