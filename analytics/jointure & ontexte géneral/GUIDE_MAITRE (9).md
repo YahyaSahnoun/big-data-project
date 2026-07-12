@@ -316,6 +316,8 @@ Attendre 30-40s, puis `docker compose ps` (9 services `Up`).
 | `code` introuvable dans le terminal WSL | VS Code pas encore connecté à WSL une première fois | Ouvrir VS Code (Windows) → `Ctrl+Shift+P` → **`WSL: Connect to WSL using Distro...`** → choisir `Ubuntu` explicitement (pas `docker-desktop`) |
 | NiFi : `ListFile` ne redétecte pas des fichiers déjà traités | `ListFile` retient en mémoire les fichiers déjà listés (comportement voulu en usage réel) | Clic droit sur `ListFile` → **View State** → **Clear State** → redémarrer, pour forcer un nouveau passage complet en test |
 | Processeurs NiFi avec triangle ⚠, ne démarrent pas | Relations (`failure`, etc.) ni reliées ni auto-terminées | Onglet **Relationships** de chaque processeur → cocher **terminate** sur tout ce qui n'est pas `success` |
+| `ClassNotFoundException: org.apache.hadoop.fs.s3a.S3AFileSystem` sur un `spark-submit` | Le connecteur S3A n'est pas natif à l'image `apache/spark`, il faut le flag `--packages` à chaque lancement | Court terme : ajouter `--packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262` à la commande. Permanent : `spark-defaults.conf` monté dans `spark-master`/`spark-worker` avec `spark.jars.packages` + la config S3A, pour ne plus jamais avoir à le répéter (voir section 7.0bis) |
+| `dataset_final` a plus de lignes que `PERIMETRE` dédoublonné (ÉTAPE 5 échoue) | Une des tables agrégées à l'étape 3 (suspect n°1 : `produit_digitaux`, traité comme 1:1 sans vérification ni dédoublonnage réel) contient encore plusieurs lignes par `RADICAL` | Diagnostiquer avec une boucle `count()` vs `select("RADICAL").distinct().count()` sur chaque table agrégée pour isoler la fautive, puis lui appliquer le même dédoublonnage `Window`/`row_number()` que `PERIMETRE`/`ASSI`. **Remplacer le `print()` d'avertissement par un `assert`** pour que le script s'arrête net au lieu de continuer sur une sortie corrompue |
 
 ---
 
@@ -476,8 +478,6 @@ Si `total == distinct` → `RADICAL` seul suffit comme clé de jointure. Sinon, 
 | Montants avec virgule française (`"5126,34"`) | Tous les fichiers avec montants | `F.regexp_replace(F.col("montant"), ",", ".").cast("double")` |
 | `NaN` dans `FLUX_CRED` = "aucun mouvement", pas une valeur manquante à imputer | Fichiers `FLUX` | Remplacer par `0`, jamais par une moyenne |
 | `ETATC` change dans le temps (ex. `V` en 2023 → `W` en 2024) | Fichiers `OPK` par année | Traiter comme un historique, pas des doublons — garder la valeur la plus récente comme feature |
-| `nb_retraits` supposé sous-ensemble de `nb_operations_gab`, ne l'est pas en pratique | `OPE_RETRAIT` vs `OPERATION_GAB` | Traiter comme deux features indépendantes, ne pas imposer de contrainte croisée artificielle (détail section 6.5ter.6) |
-| `F.max("DATE_OP")` comparait des chaînes, pas des dates (`"01/01/2024"` < `"31/12/2023"` alphabétiquement) | `build_dataset_final.py`, agrégation `derniere_operation_gab` | `F.to_timestamp("DATE_OP", "dd/MM/yyyy HH:mm:ss")` avant le `max()` (détail section 6.5ter.6) |
 
 #### Récapitulatif des opérations réalisées (script `build_dataset_final.py`)
 
@@ -493,7 +493,7 @@ Ce tableau explique, pour chaque table source, **quelle opération** a été app
 | `DEPOT_BILANCEIL` (2 fichiers) | **Union** puis **agrégation** (montant moyen) | Même logique que `SOLDE` : plusieurs lignes par client | Feature complémentaire de solde, vue "bilan" |
 | `FLUX` (2 fichiers) | **Union**, `NaN → 0` puis **agrégation** (moyenne, somme, nb de mois actifs) | Un mois sans flux crédit doit compter comme 0, pas être ignoré ou imputé par une moyenne | Feature de régularité des revenus (proxy salaire/pension) |
 | `OPERATION_GAB` (2 fichiers) | **Union** puis **agrégation** (compte, somme, moyenne, date la plus récente) | Plusieurs lignes par client (une par retrait/consultation) — logique RFM classique | Features de fréquence et de récence d'utilisation du compte |
-| `OPE_RETRAIT` (2 fichiers) | **Union** puis **agrégation** (compte, montant total) | ⚠️ Initialement supposé être un sous-ensemble filtré des opérations GAB (retraits uniquement, `CODE_FONCT=1`) — **hypothèse invalidée empiriquement** (voir section 6.5ter.6) : 59,5% des clients ont plus de retraits que d'opérations GAB, et 365 122 clients sont présents dans RETRAIT sans jamais apparaître dans GAB. Ce sont deux sources indépendantes | Feature comportementale indépendante, pas un signal "plus spécifique" de GAB comme supposé initialement |
+| `OPE_RETRAIT` (2 fichiers) | **Union** puis **agrégation** (compte, montant total) | Sous-ensemble filtré des opérations GAB (retraits uniquement) — signal plus spécifique que l'agrégat GAB global | Feature ciblée sur le comportement de retrait pur |
 | `DIGI_PAYFAC` (3 fichiers) | **Union** puis **agrégation** (compte, montant total) | Trois fichiers de nommage différent pour le même type d'événement (paiement digital confirmé), à traiter comme une seule série | Feature d'adoption des paiements digitaux |
 | `VIGNETTE` (2 fichiers) | **Union** (gestion du nom de colonne variable) puis **agrégation** (compte, montant total) | 0 à N lignes par client selon le nombre de véhicules | Feature comportementale indirecte (proxy patrimoine/profil socio-économique) |
 
@@ -572,10 +572,8 @@ perimetre = perimetre.withColumn(
 perimetre = perimetre.filter((F.col("age") >= 18) & (F.col("age") <= 100))
 ```
 
-**c) Montants extrêmes et valeurs aberrantes — traitement complet, voir section 6.5ter.** Le stub initial ci-dessous (filtrage par percentile 1%/99%, avec `.filter()` qui **supprime** les lignes) a été remplacé par une méthode plus complète : winsorisation (plafonnement, jamais de suppression) avec bornes IQR de Tukey apprises sur le train et réappliquées sur le scoring, catégorisation préalable des valeurs réellement impossibles (règles métier) vs statistiquement extrêmes, et correction d'un piège spécifique aux colonnes très concentrées à zéro. Détail complet en section 6.5ter.
+**c) Montants extrêmes (outliers statistiques), sur les colonnes de montants uniquement :**
 ```python
-# Ancien stub, conservé à titre d'illustration du problème initial (SUPPRIME
-# des lignes plutôt que de les plafonner -- ne plus utiliser tel quel) :
 bornes = dataset_final.approxQuantile("solde_moyen", [0.01, 0.99], 0.01)
 dataset_final = dataset_final.filter(
     (F.col("solde_moyen") >= bornes[0]) & (F.col("solde_moyen") <= bornes[1])
@@ -598,348 +596,6 @@ Cet `Imputer` s'intègre comme une étape du `Pipeline` MLlib (section 7.5), jus
 ```python
 dataset_final = dataset_final.filter(F.col("ETATC").isin(["11"]))  # code à confirmer
 ```
-
-### 6.5bis Nettoyage explicite des nulls après jointure (`clean_dataset.py`)
-
-Après audit des valeurs `NULL` colonne par colonne sur `dataset_final`, chaque cas a été relu comme une **décision métier**, pas comme un trou à combler mécaniquement (moyenne/médiane par défaut). Script complet : `clean_dataset.py` (annexe du projet, à lancer après `build_dataset_final.py`, avant l'entraînement **et** avant le scoring batch — les deux datasets `dataset_train_produits` et `dataset_a_scorer` reçoivent le même traitement).
-
-| Colonne | Signification du `NULL` | Décision retenue |
-|---|---|---|
-| `LIBELLE_VILLE` | Redondant avec `CODE_VILLE` (0 null) | **Colonne supprimée** — le code suffit, le libellé n'apporte rien de plus |
-| `BPR` | Négligeable (2 lignes sur l'échantillon) | **Lignes supprimées** (`dropna`) |
-| `GENDER` | Négligeable (1 ligne) | **Lignes supprimées** (`dropna`) |
-| `NOMBRE_ENFANT` | Pas d'enfant, pas une valeur manquante | `fillna(0)` — pas d'imputation par médiane |
-| `TAILLE_ENTREPRI` | Pas d'entreprise = compte particulier normal | `fillna("PARTICULIER")` — devient une catégorie explicite (signal particulier vs professionnel), la colonne n'est **pas** supprimée |
-| `depot_moyen` | Absence d'activité observée | `fillna(0.0)` |
-| `montant_moyen_gab` | Cohérent avec `nb_operations_gab=0` | `fillna(0.0)` |
-| `digital_date_activation` | Jamais activé (`digital_toujours_abonne=0`) | Date brute droppée ; remplacée par un flag `jamais_active_digital` (0/1) + une ancienneté dérivée `anciennete_digitale_jours` |
-| `derniere_operation_gab` | Jamais utilisé le GAB | Date brute droppée ; remplacée par un flag `jamais_utilise_gab` (0/1) + une récence dérivée `recence_gab_jours` |
-
-**Principe général appliqué** : ne jamais imputer une date par une valeur numérique arbitraire (un `0` serait confondu avec "aujourd'hui"/"jamais de délai") — toujours dériver un flag binaire d'absence **et** une mesure numérique (ancienneté/récence en jours), le flag portant l'information "absence" et la valeur numérique restant `null` (à traiter par l'`Imputer` de la section 6.5.d avec les autres features démographiques) ou par une valeur sentinelle explicite si l'algorithme choisi ne supporte pas les `null`.
-
-`recence_gab_jours` et `anciennete_digitale_jours` (une fois imputés) viennent s'ajouter à la liste `inputCols` du `VectorAssembler` (section 7.4/7.5.1), aux côtés de leurs flags respectifs.
-
----
-
-### 6.5ter Traitement complet des valeurs aberrantes (`clean_dataset.py`, catégorie 1 et 2)
-
-Une fois les `NULL` traités (section 6.5bis), un second passage a été nécessaire sur les valeurs **présentes mais suspectes** : compteurs négatifs, âges impossibles, montants ou compteurs statistiquement extrêmes. Ce traitement est distinct de l'imputation des nulls et s'exécute juste après elle, toujours dans `clean_dataset.py`, avec la même contrainte de non-fuite train/scoring que l'`Imputer` (section 6.5.d) : les bornes sont apprises **uniquement** sur le train, sauvegardées en JSON, puis rejouées telles quelles sur la population à scorer.
-
-#### 6.5ter.1 — Principe général : deux catégories distinctes
-
-Toutes les valeurs aberrantes ne se traitent pas de la même façon :
-
-- **Catégorie 1 — Valeurs impossibles** : erreurs de données pures (un compteur négatif, une date de naissance dans le futur), sans interprétation métier valide. Corrigées par des règles métier explicites (bornes dures), jamais par une méthode statistique.
-- **Catégorie 2 — Valeurs statistiquement extrêmes** : plausibles individuellement (un très gros solde n'est pas "impossible") mais qui s'écartent fortement de la distribution du reste de la population. Traitées par winsorisation (plafonnement) selon la méthode IQR de Tukey — **jamais** par suppression de ligne, contrairement au stub initial de la section 6.5c.
-
-Mélanger les deux catégories est le principal piège : appliquer l'IQR à une vraie erreur de saisie la masque plutôt que de la corriger ; supprimer ou plafonner arbitrairement une valeur extrême mais plausible fait perdre un signal utile au modèle (voir 6.5ter.5, cas des colonnes zero-inflated).
-
-#### 6.5ter.2 — Catégorie 1 : valeurs impossibles (règles métier)
-
-```python
-COLS_COMPTAGE_NON_NEGATIVES = [
-    "nb_mois_observes_solde", "nb_mois_avec_flux", "nb_operations_gab",
-    "nb_retraits", "nb_paiements_digitaux", "nb_vignettes_payees", "NOMBRE_ENFANT",
-]
-
-# ATTENTION : solde_moyen, solde_min, solde_max sont volontairement EXCLUS
-# ici -- un solde négatif (découvert bancaire) est un état de compte
-# parfaitement légitime, pas une erreur de saisie.
-COLS_MONTANT_NON_NEGATIFS = [
-    "depot_moyen", "flux_cred_moyen", "flux_cred_total", "montant_total_gab",
-    "montant_moyen_gab", "montant_total_retraits", "montant_total_payfac",
-    "montant_total_vignette",
-]
-
-SEUIL_MAX_MOIS_OBSERVES = 36  # 12*3 : au-delà, jugé non plausible
-SEUIL_MAX_ENFANTS = 12        # au-delà, probable erreur de saisie
-
-
-def corriger_valeurs_impossibles(df, is_train: bool):
-    """
-    is_train=True  -> les lignes vraiment incohérentes peuvent être
-                       supprimées (ex. date de naissance dans le futur).
-    is_train=False -> RIEN n'est jamais supprimé (population à scorer) :
-                       les valeurs impossibles sont corrigées/plafonnées,
-                       jamais en droppant la ligne.
-    """
-    n_avant = df.count()
-
-    # --- Compteurs négatifs -> 0 ---
-    for c in COLS_COMPTAGE_NON_NEGATIVES:
-        if c in df.columns:
-            n_neg = df.filter(F.col(c) < 0).count()
-            if n_neg > 0:
-                print(f"  {c} : {n_neg} valeur(s) négative(s) -> ramenées à 0")
-                df = df.withColumn(c, F.when(F.col(c) < 0, 0).otherwise(F.col(c)))
-
-    # --- nb_mois_observes_solde anormalement élevé (seuil métier, pas IQR :
-    #     Q1=Q3=24 sur cette colonne -> IQR nul, la méthode statistique est
-    #     inopérante ici). Origine probable : deux sources SOLDE_2025 /
-    #     SOLDE_COMPLEMENT dont l'union compte plusieurs sous-comptes/lignes
-    #     comme des mois d'observation distincts pour un même RADICAL. ---
-    c_mois = "nb_mois_observes_solde"
-    if c_mois in df.columns:
-        n_suspect = df.filter(F.col(c_mois) > SEUIL_MAX_MOIS_OBSERVES).count()
-        if n_suspect > 0:
-            print(f"  {c_mois} : {n_suspect} valeur(s) > {SEUIL_MAX_MOIS_OBSERVES} mois -> plafonnées")
-        df = df.withColumn(f"{c_mois}_etait_extreme",
-                            F.when(F.col(c_mois) > SEUIL_MAX_MOIS_OBSERVES, 1).otherwise(0))
-        df = df.withColumn(c_mois,
-                            F.when(F.col(c_mois) > SEUIL_MAX_MOIS_OBSERVES, F.lit(SEUIL_MAX_MOIS_OBSERVES))
-                             .otherwise(F.col(c_mois)))
-
-    # --- NOMBRE_ENFANT anormalement élevé (seuil métier : Q1=0, Q3=1 sur
-    #     cette colonne -> IQR de Tukey donnerait une borne haute à 2.5,
-    #     ce qui plafonnerait à tort n'importe quelle famille de 3 enfants
-    #     ou plus. Or NOMBRE_ENFANT est la feature la plus directement liée
-    #     au produit "Avenir Mes Enfants" -- signal précieux à préserver.
-    #     Seuil généreux à la place, confirmé a posteriori par boxplot :
-    #     distribution continue et régulière jusqu'à 10-12, sans rupture
-    #     nette indiquant une population d'erreurs séparée. ---
-    c_enf = "NOMBRE_ENFANT"
-    if c_enf in df.columns:
-        n_suspect = df.filter(F.col(c_enf) > SEUIL_MAX_ENFANTS).count()
-        if n_suspect > 0:
-            print(f"  {c_enf} : {n_suspect} valeur(s) > {SEUIL_MAX_ENFANTS} -> plafonnées")
-        df = df.withColumn(f"{c_enf}_etait_extreme",
-                            F.when(F.col(c_enf) > SEUIL_MAX_ENFANTS, 1).otherwise(0))
-        df = df.withColumn(c_enf,
-                            F.when(F.col(c_enf) > SEUIL_MAX_ENFANTS, F.lit(SEUIL_MAX_ENFANTS))
-                             .otherwise(F.col(c_enf)))
-
-    # --- Montants négatifs illégitimes -> 0 ---
-    for c in COLS_MONTANT_NON_NEGATIFS:
-        if c in df.columns:
-            n_neg = df.filter(F.col(c) < 0).count()
-            if n_neg > 0:
-                print(f"  {c} : {n_neg} valeur(s) négative(s) -> ramenées à 0")
-                df = df.withColumn(c, F.when(F.col(c) < 0, 0.0).otherwise(F.col(c)))
-
-    # --- Dates de naissance impossibles (âge < 16 ou > 100 ans) ---
-    if "DATE_OF_BIRTH" in df.columns:
-        df = df.withColumn(
-            "_age_tmp",
-            F.floor(F.datediff(F.current_date(), F.to_date(F.col("DATE_OF_BIRTH"), "dd/MM/yyyy")) / 365.25),
-        )
-        n_suspect = df.filter((F.col("_age_tmp") < 16) | (F.col("_age_tmp") > 100)).count()
-        if is_train:
-            # Sur le train seulement : effectif marginal, probable erreur
-            # de saisie -> lignes supprimées.
-            if n_suspect > 0:
-                print(f"  DATE_OF_BIRTH : {n_suspect} âge(s) impossible(s) -> lignes supprimées (train)")
-            df = df.filter((F.col("_age_tmp") >= 16) & (F.col("_age_tmp") <= 100))
-        else:
-            # Sur le scoring : aucune ligne jamais supprimée.
-            if n_suspect > 0:
-                print(f"  DATE_OF_BIRTH : {n_suspect} âge(s) impossible(s) (scoring, non supprimés)")
-        df = df.drop("_age_tmp")
-
-    n_apres = df.count()
-    if is_train:
-        print(f"  Lignes avant/après (valeurs impossibles, train) : {n_avant} -> {n_apres}")
-    return df
-```
-Ce bloc remplace le stub `(b) Âges/dates aberrants` de la section 6.5 : la logique âge y est désormais intégrée avec les autres règles métier, dans une seule fonction cohérente.
-
-#### 6.5ter.3 — Catégorie 2 : plafonnement statistique (winsorisation IQR)
-
-```python
-IQR_K = 1.5  # facteur de Tukey standard
-OUTLIER_BOUNDS_PATH = "./models/outlier_bounds.json"
-
-COLS_A_PLAFONNER = [
-    "solde_moyen", "solde_min", "solde_max", "depot_moyen",
-    "flux_cred_moyen", "flux_cred_total", "montant_total_gab",
-    "montant_moyen_gab", "montant_total_retraits", "montant_total_payfac",
-    "montant_total_vignette", "nb_operations_gab",
-]
-
-
-def apprendre_bornes_plafonnement(df_train, cols=None):
-    """Calcule les bornes IQR (Tukey, k=IQR_K) sur le TRAIN uniquement,
-    sauvegarde en JSON pour être réappliquées telles quelles sur le scoring
-    -- même logique de non-fuite que l'Imputer (section 6.5.d)."""
-    if cols is None:
-        cols = COLS_A_PLAFONNER
-
-    cols_zero_inflated = detecter_colonnes_zero_inflated(df_train, cols)  # voir 6.5ter.5
-
-    bornes = {}
-    for c in cols:
-        if c not in df_train.columns:
-            continue
-        est_zi = c in cols_zero_inflated
-        base_df = df_train.filter(F.col(c) > 0) if est_zi else df_train
-
-        n_base = base_df.count()
-        if n_base < 10:
-            continue  # trop peu de valeurs exploitables
-
-        q1, q3 = base_df.approxQuantile(c, [0.25, 0.75], 0.01)
-        iqr = q3 - q1
-        if iqr == 0:
-            continue  # IQR nul, méthode inopérante sur cette colonne
-
-        lo, hi = q1 - IQR_K * iqr, q3 + IQR_K * iqr
-        if est_zi:
-            lo = min(lo, 0.0)  # les zéros sont légitimes, jamais rejetés
-        bornes[c] = {"min": lo, "max": hi}
-
-    os.makedirs(os.path.dirname(OUTLIER_BOUNDS_PATH), exist_ok=True)
-    with open(OUTLIER_BOUNDS_PATH, "w") as f:
-        json.dump(bornes, f, indent=2)
-    return bornes
-
-
-def charger_bornes_plafonnement():
-    with open(OUTLIER_BOUNDS_PATH) as f:
-        return json.load(f)
-
-
-def appliquer_plafonnement(df, bornes, ajouter_flags=True):
-    """Plafonne chaque colonne à [min, max] -- ne supprime JAMAIS de ligne,
-    ni en train ni en scoring. Ajoute un flag <col>_etait_extreme (0/1)."""
-    for c, b in bornes.items():
-        if c not in df.columns:
-            continue
-        lo, hi = b["min"], b["max"]
-        if ajouter_flags:
-            df = df.withColumn(f"{c}_etait_extreme",
-                                F.when((F.col(c) < lo) | (F.col(c) > hi), 1).otherwise(0))
-        df = df.withColumn(
-            c,
-            F.when(F.col(c) < lo, F.lit(lo)).when(F.col(c) > hi, F.lit(hi)).otherwise(F.col(c)),
-        )
-    return df
-```
-
-#### 6.5ter.4 — Orchestration (train / scoring, sans fuite)
-
-```python
-def traiter_valeurs_aberrantes_train(df_train):
-    df_train = corriger_valeurs_impossibles(df_train, is_train=True)
-    bornes = apprendre_bornes_plafonnement(df_train)
-    return appliquer_plafonnement(df_train, bornes)
-
-
-def traiter_valeurs_aberrantes_scoring(df_scorer):
-    df_scorer = corriger_valeurs_impossibles(df_scorer, is_train=False)
-    bornes = charger_bornes_plafonnement()  # jamais recalculées sur le scoring
-    return appliquer_plafonnement(df_scorer, bornes)
-```
-Même contrat que l'`Imputer` MLlib (section 6.5.d) : les bornes utilisées sur la population à scorer sont strictement celles apprises sur le train, garantissant qu'aucune information de la population de scoring ne contamine le calcul des seuils.
-
-#### 6.5ter.5 — Le piège des colonnes "zero-inflated"
-
-Un problème spécifique a été identifié sur les colonnes où une large majorité des clients affichent une valeur de `0` (absence d'usage légitime, pas une erreur) : `montant_total_gab`, `montant_moyen_gab`, `montant_total_payfac`, `montant_total_vignette`. Pour ces colonnes, `Q1` et `Q3` valaient souvent `0` eux-mêmes, ce qui effondrait les bornes de Tukey à `[0, 0]` : **toute valeur non nulle — c'est-à-dire tout client réellement actif sur ce canal — se retrouvait plafonnée à 0**, détruisant le seul signal utile de la colonne.
-
-```python
-def detecter_colonnes_zero_inflated(df_train, cols, seuil_part_zero: float = 0.5):
-    """Détecte, sur le train, les colonnes où >= seuil_part_zero des valeurs
-    valent 0. Pour ces colonnes, les quantiles Q1/Q3 doivent être calculés
-    sur le sous-ensemble des valeurs > 0 uniquement, sinon l'IQR s'effondre."""
-    n_total = df_train.count()
-    zero_inflated = set()
-    for c in cols:
-        if c not in df_train.columns:
-            continue
-        n_zero = df_train.filter(F.col(c) == 0).count()
-        if (n_zero / n_total if n_total else 0) >= seuil_part_zero:
-            zero_inflated.add(c)
-    return zero_inflated
-```
-
-**Avant/après sur le train du projet (4 141 lignes) :**
-
-| Colonne | % de zéros | Avant fix (bornes dégénérées) | Après fix |
-|---|---|---|---|
-| `montant_total_gab` | 91% | `[0, 0]` → 386 valeurs écrasées à 0 | `[-2013.2, 3456.8]` → 27 plafonnées |
-| `montant_moyen_gab` | 91% | `[0, 0]` → 386 valeurs écrasées à 0 | `[-94.9, 159.7]` → 61 plafonnées |
-| `montant_total_payfac` | 67% | `[-2411.4, 4019.0]` (déjà non nul mais trop resserré) → 883 plafonnées | `[-22821.6, 43440.4]` → 117 plafonnées |
-| `montant_total_vignette` | 88% | `[0, 0]` → 517 valeurs écrasées à 0 | `[-2450.0, 5950.0]` → 31 plafonnées |
-
-Le fix consiste à calculer `Q1`/`Q3` sur le sous-ensemble des valeurs strictement positives pour ces 4 colonnes, et à forcer systématiquement la borne basse à `0` (jamais positive), puisque les zéros représentent une absence d'usage légitime.
-
-#### 6.5ter.6 — Cohérence croisée GAB / RETRAIT : une hypothèse invalidée
-
-Le plafonnement colonne par colonne (6.5ter.3) ne détecte que des valeurs *individuellement* extrêmes — il ne peut pas détecter une incohérence *entre* deux colonnes. Un test croisé a été mené sur `nb_retraits` et `nb_operations_gab`, motivé par l'hypothèse initiale de la section 6.4 (et de `guide_lecture_donnees_CORRIGE.pdf`) selon laquelle RETRAIT serait un sous-ensemble filtré de GAB (`CODE_FONCT = 1`).
-
-```python
-df.filter(F.col("nb_retraits") > F.col("nb_operations_gab")).count()
-# -> 2 466 clients sur 4 141 (59,5%) : impossible si RETRAIT est un vrai
-#    sous-ensemble de GAB. Pas un effet de queue de distribution : la
-#    MÉDIANE de nb_retraits (19) dépasse déjà la médiane de
-#    nb_operations_gab (1) -- l'incohérence touche le corps entier de la
-#    distribution.
-```
-
-Investigation menée directement sur les fichiers sources bruts (`gab_1`, `gab_2`, `retrait_1`, `retrait_2`, avant toute agrégation dans `build_dataset_final.py`) :
-
-- **`CODE_FONCT`** existe bien dans les fichiers GAB, avec les valeurs `031, 038, 095, 050, 040, 039, 021` — **jamais la valeur `1`** mentionnée dans le guide de lecture initial. Le filtre décrit n'est de toute façon jamais implémenté dans le code : `nb_retraits` provient de fichiers texte entièrement séparés (`ATT_HISSAB_OPE_RETRAIT2023` / `ATT_PROD_EPARGNE_OPER_RETRAIT_COMPLEMENT`), sans lien de filtrage avec `gab_union`.
-- **Preuve définitive de non-inclusion** :
-  ```python
-  radicaux_gab = gab_union.select("RADICAL").distinct()
-  radicaux_retrait_only = retrait_union.select("RADICAL").distinct().subtract(radicaux_gab)
-  radicaux_retrait_only.count()  # -> 365 122
-  ```
-  365 122 clients (RADICAL) sont présents dans l'union RETRAIT mais totalement absents de l'union GAB — un sous-ensemble ne peut par définition pas contenir des individus absents de son ensemble parent.
-- **Bug annexe découvert au passage** : le calcul de `derniere_operation_gab` (`F.max("DATE_OP")`) était effectué sur `DATE_OP` non castée en date, donc comparée comme une **chaîne de caractères**. Une comparaison alphabétique ne respecte pas l'ordre chronologique réel (ex. `"01/01/2024"` est alphabétiquement antérieur à `"31/12/2023"`, bien que chronologiquement postérieur — visible dans les résultats bruts de `gab_1` : `date_min=01/01/2024`, `date_max=31/12/2023`).
-
-**Correctifs appliqués dans `build_dataset_final.py`, bloc `gab_agg` (étape 3) :**
-```python
-gab_agg = (
-    gab_union
-    .withColumn("MONTANT_num", to_num("MONTANT"))
-    .withColumn("DATE_OP_ts", F.to_timestamp("DATE_OP", "dd/MM/yyyy HH:mm:ss"))  # FIX cast
-    .groupBy("RADICAL")
-    .agg(
-        F.count("*").alias("nb_operations_gab"),
-        F.sum("MONTANT_num").alias("montant_total_gab"),
-        F.avg("MONTANT_num").alias("montant_moyen_gab"),
-        F.max("DATE_OP_ts").alias("derniere_operation_gab"),  # FIX : sur la colonne castée
-    )
-)
-```
-Ce correctif touche `gab_agg`, qui alimente le `LEFT JOIN` final (étape 4) — il a donc nécessité une **réexécution complète** de `build_dataset_final.py`, puis de `clean_dataset.py` sur les données regénérées (les bornes IQR de la section 6.5ter.3 doivent être réapprises sur le nouveau train).
-
-**Conclusion retenue** : `nb_operations_gab` et `nb_retraits` sont traités comme deux features comportementales **indépendantes**, chacune plafonnée avec ses propres bornes IQR, sans contrainte de cohérence imposée entre elles. Imposer artificiellement `nb_retraits ≤ nb_operations_gab` reviendrait à fabriquer une relation absente des données sources plutôt qu'à corriger une véritable erreur. La description de `OPE_RETRAIT` en section 6.4 a été corrigée en conséquence.
-
-#### 6.5ter.7 — Résultat du diagnostic (train, après tous les correctifs)
-
-| Colonne | Bornes apprises | Valeurs plafonnées |
-|---|---|---|
-| `solde_moyen` | `[-47414.3, 79296.3]` | 576 |
-| `solde_min` | `[-4270.2, 4078.6]` | 1 142 |
-| `solde_max` | `[-170523.9, 291488.4]` | 518 |
-| `depot_moyen` | `[-100695.9, 169849.8]` | 602 |
-| `flux_cred_moyen` | `[-26545.4, 45751.0]` | 469 |
-| `flux_cred_total` | `[-419138.8, 719364.7]` | 507 |
-| `montant_total_gab`* | `[-2013.2, 3456.8]` | 27 |
-| `montant_moyen_gab`* | `[-94.9, 159.7]` | 61 |
-| `montant_total_retraits` | `[-94200.0, 157000.0]` | 198 |
-| `montant_total_payfac`* | `[-22821.6, 43440.4]` | 117 |
-| `montant_total_vignette`* | `[-2450.0, 5950.0]` | 31 |
-| `nb_operations_gab` | `[-22.5, 37.5]` | 696 (~17% du train, proportion assumée faute de justification métier pour un `k` différent) |
-| `nb_mois_observes_solde` | règle métier, seuil 36 (catégorie 1) | 668 |
-| `NOMBRE_ENFANT` | règle métier, seuil 12 (catégorie 1) | 1 |
-
-\* Colonnes zero-inflated : quantiles calculés sur les valeurs strictement positives uniquement (section 6.5ter.5).
-
-Total : 4 944 valeurs plafonnées (catégorie 2, 12 colonnes) + 669 valeurs corrigées par règles métier (catégorie 1, `nb_mois_observes_solde` + `NOMBRE_ENFANT`). Aucune ligne supplémentaire supprimée à cette étape.
-
-#### 6.5ter.8 — Vérifications de cohérence croisée restant à faire
-
-Le plafonnement indépendant colonne par colonne peut réintroduire des incohérences que le fichier source n'avait pas — deux colonnes plafonnées à des bornes différentes peuvent ne plus respecter une relation logique attendue. À tester avant l'entraînement :
-
-```python
-# solde_min ne doit jamais dépasser solde_max après plafonnement indépendant
-df.filter(F.col("solde_min") > F.col("solde_max")).count()
-
-# dates GAB dans le futur, ou incohérentes avec l'âge du client
-df.filter(F.col("derniere_operation_gab") > F.current_date()).count()
-```
-Non exécuté à ce stade — à faire avant de considérer le nettoyage des valeurs aberrantes comme définitivement clos.
 
 ---
 
@@ -970,6 +626,39 @@ df_gab = (
     .withColumn("NUM_CARTE", F.col("NUM_CARTE").cast("string"))
 )
 ```
+
+### 7.0bis Configurer Spark une fois pour toutes (éviter `--packages` à chaque script)
+
+Le connecteur S3A n'est pas inclus par défaut dans l'image `apache/spark` — sans le flag `--packages`, tout script lisant/écrivant sur `s3a://` échoue avec `ClassNotFoundException: S3AFileSystem`. Plutôt que de rallonger chaque commande `spark-submit`, configurez-le une fois :
+
+```bash
+mkdir -p spark-conf
+cat > spark-conf/spark-defaults.conf << 'EOF'
+spark.jars.packages    org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262
+spark.hadoop.fs.s3a.endpoint          http://minio:9000
+spark.hadoop.fs.s3a.access.key        minioadmin
+spark.hadoop.fs.s3a.secret.key        minioadmin123
+spark.hadoop.fs.s3a.path.style.access true
+spark.hadoop.fs.s3a.impl              org.apache.hadoop.fs.s3a.S3AFileSystem
+EOF
+```
+
+Puis montez-le dans `spark-master` et `spark-worker` du `docker-compose.yml` :
+```yaml
+spark-master:
+  volumes:
+    - spark-data:/opt/spark/work-dir
+    - ./spark-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+
+spark-worker:
+  volumes:
+    - ./spark-conf/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+```
+```bash
+docker compose up -d spark-master spark-worker
+```
+
+Ensuite, `spark-submit --master spark://spark-master:7077 mon_script.py` suffit — plus besoin de `--packages`, et les scripts eux-mêmes peuvent laisser tomber les 5 lignes `.config("spark.hadoop.fs.s3a...")` répétées partout, `SparkSession.builder.appName(...).getOrCreate()` suffit.
 
 ### 7.1 Vérifier la clé de jointure avant tout
 
@@ -1316,14 +1005,10 @@ Le reste du Sprint 3 (DAG Airflow, Spark Thrift Server, connexion Power BI) ne c
 
 - [x] Environnement Docker fonctionnel sur les deux machines
 - [x] Données ingérées dans `raw-data` (NiFi + méthode de secours `mc`)
-- [x] Fichiers étudiés, grille de la section 6 remplie
-- [x] Table cible (client → produit) identifiée et confirmée avec l'encadrant
-- [x] Noms/codes exacts des 3 produits confirmés (codes `53`/`09`/`18`)
-- [x] Jointure features + cible réalisée (`build_dataset_final.py`)
-- [x] Nettoyage des nulls post-jointure (`clean_dataset.py`, section 6.5bis) — `dataset_train_produits_clean` et `dataset_a_scorer_clean` écrits dans `processed-data`
-- [x] Valeurs aberrantes traitées en deux catégories (règles métier + winsorisation IQR), avec correction du piège des colonnes zero-inflated (GAB, payfac, vignette) et de deux seuils métier (`nb_mois_observes_solde`, `NOMBRE_ENFANT`) — section 6.5ter
-- [x] Investigation croisée GAB/RETRAIT : hypothèse "sous-ensemble" invalidée empiriquement, traité comme deux features indépendantes ; bug de cast de date sur `derniere_operation_gab` corrigé dans `build_dataset_final.py`, avec réexécution complète de la chaîne — section 6.5ter.6
-- [ ] Vérifications de cohérence croisée restantes (`solde_min > solde_max`, dates GAB dans le futur) — section 6.5ter.8
+- [ ] Fichiers étudiés, grille de la section 6 remplie
+- [ ] Table cible (client → produit) identifiée et confirmée avec l'encadrant
+- [ ] Noms/codes exacts des 3 produits confirmés (vs. notes section 0)
+- [ ] Jointure features + cible réalisée
 - [ ] Cible encodée (`StringIndexer`), déséquilibre des classes traité
 - [ ] Au moins 3 algorithmes multi-classes comparés (F1 pondéré)
 - [ ] Pipeline final sauvegardé
