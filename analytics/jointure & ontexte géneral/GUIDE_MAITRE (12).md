@@ -32,7 +32,19 @@ Les chiffres notés par l'encadrant (53, 18, et probablement 09 mal lu "03") son
 - Produit 2 : nom peu lisible (peut-être "Marhaba"), effectif noté : 03
 - Produit 3 : *"Épargne Évolutif"* (effectif noté : 18)
 
-**Conséquence sur la modélisation** : ce n'est **pas** N modèles binaires indépendants, mais **un seul modèle de classification multi-classes** (le nombre exact de classes dépend du point bloquant ci-dessus : 3 si `ASSI` est filtré aux seuls produits d'épargne, potentiellement plus si l'encadrant confirme que davantage de produits sont dans le périmètre). Détails techniques en section 7.
+> ### ⚠️ Recadrage du problème (postérieur au tableau ci-dessus — à mentionner dans le rapport comme un oubli corrigé)
+>
+> Le cadrage ci-dessus (et celui qui a suivi pendant une bonne partie du projet) traitait l'absence d'un client dans `ASSI` comme une population **"à scorer"** — une cible inconnue, à prédire une fois le modèle multi-classes entraîné. **C'était une erreur de cadrage, pas un détail technique.**
+>
+> Ne détenir **aucun** des 3 produits d'épargne est en réalité une information à part entière : c'est une **4ᵉ classe**, au même titre que les 3 produits. Le ground truth existe donc pour la **totalité** de `PERIMETRE`, pas seulement pour le sous-ensemble présent dans `ASSI` — il n'y a plus de population "inconnue" à ce niveau.
+>
+> Le besoin métier se découpe donc en **deux modèles**, pas un :
+> 1. **Modèle principal — éligibilité** (binaire) : le client détient-il un produit d'épargne (n'importe lequel des 3) ou aucun ? Entraîné sur la **totalité** de `dataset_final`.
+> 2. **Modèle bonus — lequel des 3 produits** (multi-classes) : n'a de sens que si la réponse à la question précédente est "oui" — entraîné **uniquement** sur le sous-ensemble éligible.
+>
+> `build_dataset_final.py` a été mis à jour en conséquence (section 6.4ter ci-dessous détaille le changement). **`EDA_final.ipynb` et le notebook de pipeline d'entraînement ne le sont pas encore** — ils référencent toujours les anciens chemins `dataset_train_produits`/`dataset_a_scorer` et l'ancien cadrage à un seul modèle multi-classes. C'est le prochain chantier (voir checklist, section 10).
+
+**Conséquence sur la modélisation** : ce n'est **pas** un seul modèle multi-classes entraîné sur une cible partiellement inconnue, mais **deux modèles séparés** : un modèle binaire d'éligibilité entraîné sur toute la population, et un modèle multi-classes (3 classes : `53`/`09`/`18`) entraîné uniquement sur les clients éligibles. Détails techniques en section 7.
 
 **Ce qui a été fait entre-temps** : les 21 fichiers ont été étudiés en détail par le collègue (voir `guide_lecture_donnees_CORRIGE.pdf`, résumé complet en section 6.4 ci-dessous) — la structure des données, la clé de jointure, et les 5 familles de fichiers sont maintenant connues. Il ne reste que le point bloquant ci-dessus à trancher avant de coder les jointures définitives.
 
@@ -499,18 +511,36 @@ Ce tableau explique, pour chaque table source, **quelle opération** a été app
 
 **Pourquoi des `LEFT JOIN` et pas des `INNER JOIN` pour les features ?** Un client peut légitimement n'avoir aucune opération GAB, aucune vignette, etc. — ce n'est pas une donnée manquante à traiter comme une erreur, c'est une absence d'activité réelle. Un `INNER JOIN` aurait exclu ces clients du dataset ; le `LEFT JOIN` + `fillna(0)` les garde en codant correctement leur inactivité.
 
-**Pourquoi un `INNER`/`LEFT` sur `cible` change tout ?** La jointure entre `PERIMETRE` et `cible` (`ASSI` filtré) est volontairement en `LEFT` dans le script : elle garde aussi les clients **sans** produit d'épargne connu (`label_nom` sera `NULL` pour eux). C'est ce qui permet l'étape 6 : séparer ceux qui serviront à **entraîner et évaluer** le modèle (`clients_avec_label`) de ceux qui constituent la **vraie population à scorer** (`clients_a_scorer`) — c'est-à-dire l'objectif final du projet.
+**Pourquoi un `LEFT` sur `cible` change tout (mis à jour, cf. recadrage section 0) ?** La jointure entre `PERIMETRE` et `cible` (`ASSI` filtré) est volontairement en `LEFT` dans le script : elle garde aussi les clients **sans** produit d'épargne connu (`label_nom` sera `NULL` pour eux). Ce `NULL` n'est **plus** interprété comme "cible inconnue, à scorer" — c'est directement recodé en `label_eligibilite = 0` (voir 6.4ter). Il n'y a donc plus, à ce stade, de population "à scorer" au sens d'une cible manquante : tout `PERIMETRE` a un label d'éligibilité.
+
+#### 6.4ter Recadrage : deux datasets de sortie, pas un (mise à jour `build_dataset_final.py`)
+
+Suite au recadrage de la section 0, l'ÉTAPE 5bis du script calcule désormais un label binaire pour **toute** la population, et l'ÉTAPE 6/7 écrit **deux** jeux de données distincts au lieu d'un seul `dataset_train_produits`/`dataset_a_scorer` :
+
+| Dataset (Parquet) | Population | Cible | Usage |
+|---|---|---|---|
+| `processed-data/dataset_eligibilite/` | **Toute** `PERIMETRE` (ex-`dataset_final` complet) | `label_eligibilite` (0/1 — 1 = détient l'un des 3 produits) | Entraîner/évaluer le **modèle principal**, binaire |
+| `processed-data/dataset_produit/` | Sous-ensemble filtré `label_eligibilite = 1` uniquement | `label_code`/`label_nom` (3 classes) | Entraîner/évaluer le **modèle bonus**, multi-classes |
+
+Deux garde-fous ajoutés en même temps dans le script (à ne pas reperdre si le script est réédité) :
+- Le point d'arrêt de l'ÉTAPE 2 (confirmation des 3 codes produit `53`/`09`/`18`) est passé d'un simple `print` à un vrai `assert` (`CONFIRME_PRODUITS_EPARGNE`) — il bloque l'exécution tant qu'il n'a pas été explicitement validé après relecture de l'inventaire `ASSI`.
+- L'ÉTAPE 3bis (unicité `RADICAL` par table avant jointure) et l'ÉTAPE 5 (`n_final == n_perimetre`) sont elles aussi passées d'un avertissement à un `assert` bloquant.
+
+Deux features manquantes ont aussi été comblées à cette occasion (le pipeline aval les attendait déjà sans qu'elles existent en amont) : `anciennete_digitale_jours` et `recence_gab_jours`, calculées par rapport à une `DATE_REFERENCE` fixe (dérivée du suffixe d'année le plus récent des fichiers, ex. `2025`) et non `current_date()` — cohérent avec `age_client`, déjà calculé ainsi.
 
 #### Ce que ce dataset permet de faire ensuite
 
-Une fois `dataset_train_produits` écrit dans `processed-data`, il devient l'entrée directe de la section 7.5 (`StringIndexer` sur `label_nom`, assemblage des features avec `VectorAssembler`, entraînement et comparaison de `RandomForestClassifier`/`LogisticRegression`/`DecisionTreeClassifier`). `dataset_a_scorer` attend simplement que le pipeline final soit entraîné et sauvegardé (section 7.5/8) pour recevoir ses prédictions.
+Une fois `dataset_eligibilite` et `dataset_produit` écrits dans `processed-data`, ils deviennent l'entrée de deux entraînements séparés en section 7 : `dataset_eligibilite` → modèle binaire (`BinaryClassificationEvaluator`), `dataset_produit` → modèle multi-classes (`StringIndexer` sur `label_nom`, `MulticlassClassificationEvaluator`, section 7.7). Le scoring batch (section 8) applique les deux pipelines en cascade : d'abord l'éligibilité sur tout le monde, puis le produit uniquement sur les clients prédits éligibles.
+
+⚠️ **Pas encore fait** : `EDA_final.ipynb` et le notebook de pipeline d'entraînement lisent encore les anciens chemins (`dataset_train_produits`/`dataset_a_scorer`) et l'ancien cadrage à un seul modèle. Ils doivent être mis à jour pour pointer vers `dataset_eligibilite`/`dataset_produit` et dupliquer/adapter les étapes d'entraînement pour les deux modèles avant de relancer la Partie 1 du notebook EDA.
 
 #### État des points bloquants
 
 1. ~~Lister les valeurs distinctes de `CODE_PRODUIT`/`LIBELLE_PRODUIT` dans `ASSI`~~ — **fait**, 3 codes confirmés (`53`, `09`, `18`), à faire valider par l'encadrant avant la soutenance.
 2. ~~Vérifier l'unicité de `RADICAL` sur `PERIMETRE`~~ — **fait**, non-unique, dédoublonnage appliqué dans le script.
 3. ~~Construire les agrégations par famille~~ — **fait**, voir tableau ci-dessus.
-4. **Prochaine étape réelle** : lancer le script corrigé, confirmer que l'ÉTAPE 5 passe (`n_final == n_perimetre`), puis passer à l'encodage et l'entraînement (section 7.5).
+4. ~~Recadrer éligibilité vs produit et scinder le dataset de sortie~~ — **fait** côté `build_dataset_final.py` (section 6.4ter).
+5. **Prochaine étape réelle** : mettre à jour `EDA_final.ipynb` et le notebook de pipeline d'entraînement pour consommer `dataset_eligibilite`/`dataset_produit` (au lieu de `dataset_train_produits`/`dataset_a_scorer`) et entraîner les deux modèles séparément (section 7).
 
 **Document de référence complet** : `guide_lecture_donnees_CORRIGE.pdf` — dictionnaire de données colonne par colonne pour les 21 fichiers, avec aperçus réels des données.
 
@@ -547,55 +577,56 @@ Si vous obtenez **exactement 3 valeurs** (ou 3 + une valeur "vide"/"aucun"), ave
 
 ---
 
-## 7. Sprint 2 mis à jour — concepts et syntaxe Spark pour la classification multi-classes
+## 7. Sprint 2 mis à jour — concepts et syntaxe Spark pour les DEUX modèles (éligibilité binaire + produit multi-classes)
 
-Cette section explique **les méthodes disponibles et leur syntaxe**, à adapter dès que les vrais noms de colonnes sont connus (section 6).
+Cette section explique **les méthodes disponibles et leur syntaxe**, à adapter dès que les vrais noms de colonnes sont connus (section 6). Suite au recadrage (section 0/6.4ter), tout ce qui suit s'applique à **deux entraînements distincts, sur deux datasets distincts** :
+- Section 7.1-7.4, 7.9 : communes aux deux modèles (jointure déjà faite dans `build_dataset_final.py`, assemblage des features).
+- Section 7.5-7.6bis : le multi-classes (`RandomForestClassifier`, pondération multi-classe, Tomek Links) s'applique à `dataset_produit` (sous-ensemble éligible). Le modèle d'éligibilité (binaire) réutilise les concepts déjà connus des sprints précédents (`BinaryClassificationEvaluator`, `RandomForestClassifier`/`LogisticRegression` sans `family="multinomial"`) sur `dataset_eligibilite` (population complète) — pas redétaillé ici, cf. guide des sprints précédents.
+- Section 7.7-7.8 : évaluation et `Pipeline` — à dupliquer pour les deux modèles (deux `Pipeline` MLlib distincts, deux évaluateurs différents : `BinaryClassificationEvaluator` pour l'éligibilité, `MulticlassClassificationEvaluator` pour le produit).
 
-### 6.5 Qualité des données : ce qui est traité vs ce qui reste à faire
+### 6.5 Qualité des données : doublons, nulls, outliers — implémentation finale
 
-**Déjà géré** (dans `build_dataset_final.py`) : encodage latin1, montants à virgule française, sémantique `NaN=0` pour les flux, non-unicité de `RADICAL`, exclusivité des produits ASSI.
+**Ce plan initial est dépassé — tout est maintenant implémenté dans `EDA_final.ipynb`**, le notebook consolidé qui fait référence pour cette étape. Ne pas repartir de zéro avec les extraits de code ci-dessous, qui datent d'avant l'implémentation réelle et sont conservés uniquement pour l'historique des décisions.
 
-**Pas encore géré — à ajouter avant l'entraînement :**
+⚠️ **Écart connu (recadrage section 0/6.4ter)** : le tableau ci-dessous décrit `EDA_final.ipynb` tel qu'il existe **avant** le recadrage éligibilité/produit — il lit encore un seul dataset en entrée et écrit encore `dataset_train_produits_final`/`dataset_a_scorer_final`. La logique de nettoyage (doublons, nulls, imputation, plafonnement) reste valable telle quelle et n'a pas besoin d'être réécrite ; ce qui doit changer, c'est l'entrée (lire `dataset_eligibilite` en plus de/à la place de l'ancien dataset unique) et la sortie (produire les deux jeux nettoyés séparément, un par modèle) — pas encore fait.
 
-**a) Doublons stricts dans les tables de transactions** (lignes identiques répétées, possible chevauchement entre fichiers `_COMPLEMENT` et fichiers de base) :
-```python
-gab_union = gab_union.dropDuplicates()
-```
-À appliquer sur chaque table 1:N avant son agrégation.
+**Ce que fait `EDA_final.ipynb`, dans l'ordre :**
 
-**b) Âges/dates aberrants :**
-```python
-perimetre = perimetre.withColumn(
-    "age",
-    F.floor(F.datediff(F.current_date(), F.to_date("DATE_OF_BIRTH", "dd/MM/yyyy")) / 365.25)
-)
-perimetre = perimetre.filter((F.col("age") >= 18) & (F.col("age") <= 100))
-```
+| # | Étape | Détail |
+|---|---|---|
+| 1 | Doublons | Vérifie l'unicité de `RADICAL` (déjà garantie par `build_dataset_final.py`, contrôle de non-régression) + `dropDuplicates()` stricts, **avant** tout calcul de médiane/quantile |
+| 2 | Nulls | Règles métier par colonne (section 6.5bis ci-dessous pour le détail), encodage `GENDER` corrigé |
+| 3 | Imputation | `Imputer` (médiane) sur `anciennete_digitale_jours`/`recence_gab_jours`, **fit sur le train uniquement**, rechargé pour le scoring |
+| 4 | Valeurs impossibles | Compteurs/montants négatifs → 0, âges aberrants : lignes supprimées sur le train, plafonnées (jamais supprimées) sur le scoring |
+| 5 | Plafonnement statistique | Winsorisation IQR avec détection **zero-inflated** (quantiles calculés sur les valeurs > 0 uniquement pour les colonnes à forte proportion de zéros), bornes apprises sur le train, sauvegardées, rechargées pour le scoring |
+| 6 | Réduction de dimensions | Suppression des colonnes techniques et fortement corrélées (`digital_toujours_abonne`, `flux_cred_moyen`, `solde_max` remplacé par `solde_volatilite_relative`), dérivation `age_client` sur une date de référence **fixe** (pas `current_date()`, pour un résultat stable dans le temps) |
+| 7 | Encodage catégoriel | **Préparé** (`stages_encodage_categoriel()`, `StringIndexer`+`OneHotEncoder`) mais **pas appliqué** ici — le fit se fait dans le `Pipeline` d'entraînement (section 7.5), sur le vrai train complet |
 
-**c) Montants extrêmes (outliers statistiques), sur les colonnes de montants uniquement :**
-```python
-bornes = dataset_final.approxQuantile("solde_moyen", [0.01, 0.99], 0.01)
-dataset_final = dataset_final.filter(
-    (F.col("solde_moyen") >= bornes[0]) & (F.col("solde_moyen") <= bornes[1])
-)
-```
+**Fonctionnement local → cluster** : un seul flag `LOCAL_MODE` en haut du notebook bascule tous les chemins (données, modèle d'imputation, bornes IQR) entre un test sur un fichier local et le bucket MinIO complet. La sauvegarde des bornes IQR bascule automatiquement entre fichier JSON local (`open()`/`json.dump()`) et écriture via un DataFrame Spark sur `s3a://` (obligatoire : `open()` ne fonctionne pas sur un chemin `s3a://`).
 
-**d) Valeurs manquantes dans les features démographiques — bloquant pour `VectorAssembler`** (qui plante sur un `null`) :
-```python
-from pyspark.ml.feature import Imputer
+**Sorties produites** :
+- `dataset_train_produits_final` / `dataset_a_scorer_final` (Parquet, `processed-data/`)
+- Modèle d'imputation : `s3a://ml-scoring/models/imputer_anciennete_recence`
+- Bornes de plafonnement : `s3a://ml-scoring/models/outlier_bounds/`
 
-imputer = Imputer(
-    inputCols=["NOMBRE_ENFANT", "MARITAL_STATUS"],
-    outputCols=["NOMBRE_ENFANT_imp", "MARITAL_STATUS_imp"],
-    strategy="median",
-)
-```
-Cet `Imputer` s'intègre comme une étape du `Pipeline` MLlib (section 7.5), juste avant le `VectorAssembler`.
+### 6.5bis Règles de nettoyage détaillées (référence)
 
-**e) Filtrage des comptes actifs (décision métier, à valider avec l'encadrant, pas juste technique) :**
-```python
-dataset_final = dataset_final.filter(F.col("ETATC").isin(["11"]))  # code à confirmer
-```
+**Doublons** : `RADICAL` (contrôle), lignes strictement identiques dans chaque table (`dropDuplicates()`), avant toute agrégation/statistique.
+
+**Nulls, par colonne :**
+- `GENDER` : encodage cassé (`FÃ©minin`) normalisé — les valeurs déjà correctes sont explicitement préservées (piège identifié : un `.otherwise(None)` mal écrit peut effacer des données valides).
+- `LIBELLE_VILLE` : supprimé (redondant avec `CODE_VILLE`).
+- `BPR`/`GENDER` : `dropna` (nulls négligeables observés).
+- `NOMBRE_ENFANT` : `fillna(0)` — absence = pas d'enfant, pas une donnée manquante.
+- `TAILLE_ENTREPRI` : `fillna("PARTICULIER")` — absence = client particulier, pas professionnel.
+- `pack_actuel`/`pack_etat` : catégorie explicite `"SANS_PACK"`/`"SANS_ETAT"`.
+- `depot_moyen`/`montant_moyen_gab` : `fillna(0.0)` — absence d'activité, pas une moyenne à deviner.
+- `digital_date_activation`/`derniere_operation_gab` : dérivées en `jamais_active_digital`/`jamais_utilise_gab` (flag binaire) + `anciennete_digitale_jours`/`recence_gab_jours` (ancienneté en jours), colonnes de dates brutes supprimées.
+- `anciennete_digitale_jours`/`recence_gab_jours` : `Imputer` médiane, fit train uniquement.
+
+**Valeurs impossibles (catégorie 1, règle métier)** : compteurs/montants négatifs → 0 ; `nb_mois_observes_solde` plafonné à 36 ; `NOMBRE_ENFANT` plafonné à 12 ; âge < 16 ou > 100 ans → ligne supprimée sur le train, plafonnée sur le scoring. Chaque plafonnement génère une colonne `_etait_extreme` (flag), pour que le modèle distingue une vraie valeur d'une valeur corrigée.
+
+**Plafonnement statistique (catégorie 3, IQR)** : `k=1.5` (Tukey standard), sur `solde_moyen/min/max`, `depot_moyen`, `flux_cred_moyen/total`, `montant_total/moyen_gab`, `montant_total_retraits/payfac/vignette`. Détection zero-inflated si ≥50% de zéros sur la colonne.
 
 ---
 
@@ -845,15 +876,15 @@ Cette formule (`total / (nb_classes × effectif_de_la_classe)`) est la pondérat
 
 **Concept.** Un lien de Tomek est une paire de points de classes différentes qui sont chacun le plus proche voisin de l'autre — un signal que ces points sont à la frontière, voire que le point majoritaire "empiète" sur la zone de la classe minoritaire. Les supprimer nettoie la frontière de décision. **Ce n'est pas une alternative à la pondération, c'est un complément** : Tomek Links agit sur les *lignes* (avant entraînement), la pondération agit sur la *fonction de coût* (pendant l'entraînement).
 
-**Pourquoi ça ne tourne pas dans Spark.** `imbalanced-learn` (la librairie qui implémente Tomek Links) est conçue pour scikit-learn, sur une seule machine, en mémoire — MLlib n'a pas d'équivalent distribué. La bonne nouvelle : Tomek Links ne s'applique **qu'à l'ensemble étiqueté** (`clients_avec_label`, ~140K lignes), jamais à `clients_a_scorer` (3M+ lignes) — 140K lignes tiennent largement en mémoire sur une seule machine.
+**Pourquoi ça ne tourne pas dans Spark.** `imbalanced-learn` (la librairie qui implémente Tomek Links) est conçue pour scikit-learn, sur une seule machine, en mémoire — MLlib n'a pas d'équivalent distribué. La bonne nouvelle : cette section concerne uniquement le **modèle bonus** (produit), donc uniquement `dataset_produit` — le sous-ensemble déjà filtré aux clients éligibles (~140K lignes selon les premiers comptages), jamais `dataset_eligibilite` (population complète, 3M+ lignes) qui n'a pas ce problème de frontière multi-classe. 140K lignes tiennent largement en mémoire sur une seule machine.
 
 ```python
 import pandas as pd
 from imblearn.under_sampling import TomekLinks
 from pyspark.sql import functions as F
 
-# 1. Ne rapatrier que le train set étiqueté, jamais la population à scorer
-train_pd = clients_avec_label.select(
+# 1. Ne rapatrier que dataset_produit (sous-ensemble éligible), jamais dataset_eligibilite en entier
+train_pd = dataset_produit.select(
     "RADICAL", "age", "solde_moyen", "flux_cred_moyen", "nb_operations_gab",
     "montant_total_gab", "nb_vignettes_payees", "label_nom"  # + vos autres features
 ).toPandas()
@@ -875,7 +906,7 @@ df_train_clean = spark.createDataFrame(train_pd_clean)
 
 **Ordre d'exécution à respecter :**
 ```
-dataset_train_produits (Parquet)
+dataset_produit (Parquet, sous-ensemble éligible)
         │
         ▼
   Tomek Links (pandas, une seule fois)   ← AVANT le split train/test
@@ -891,9 +922,9 @@ dataset_train_produits (Parquet)
 ```
 ⚠️ Recalculez le poids par classe (section 7.6) **après** Tomek Links, pas avant — la distribution des classes a changé, l'ancien poids ne serait plus juste.
 
-### 7.6ter Nettoyer `dataset_train_produits` maintenant, ou regénérer ?
+### 7.6ter Nettoyer `dataset_eligibilite`/`dataset_produit` maintenant, ou regénérer ?
 
-Deux catégories de correctifs, traitées différemment :
+S'applique aux deux jeux de données (le principe est le même, que ce soit sur la population complète ou le sous-ensemble éligible). Deux catégories de correctifs, traitées différemment :
 
 | Nettoyage | Sur le Parquet déjà écrit, ou relancer `build_dataset_final.py` ? |
 |---|---|
@@ -971,46 +1002,72 @@ for nom, algo in candidats.items():
 
 ---
 
-## 8. Sprint 3 — scoring batch multi-classes (mise à jour)
+## 8. Sprint 3 — scoring batch en cascade : éligibilité puis produit (mise à jour, recadrage section 0)
+
+Suite au recadrage, le scoring batch n'applique plus un seul pipeline multi-classes à tout le monde — il enchaîne les **deux** modèles, le second ne s'appliquant qu'aux clients que le premier juge éligibles :
 
 ```python
 from pyspark.ml import PipelineModel
 
-pipeline_model = PipelineModel.load("s3a://ml-scoring/models/pipeline_multiclasse_v1")
+pipeline_eligibilite = PipelineModel.load("s3a://ml-scoring/models/pipeline_eligibilite_v1")
+pipeline_produit     = PipelineModel.load("s3a://ml-scoring/models/pipeline_multiclasse_v1")
 all_clients = spark.read.parquet("s3a://processed-data/features_clients/")
 
-scores = pipeline_model.transform(all_clients).select("client_id", "produit_predit", "probability")
+# 1) Modèle principal : éligible ou non, sur TOUTE la population
+scores_eligibilite = pipeline_eligibilite.transform(all_clients) \
+    .select("client_id", "prediction", "probability") \
+    .withColumnRenamed("prediction", "eligible_predit") \
+    .withColumnRenamed("probability", "probabilite_eligibilite")
+
+# 2) Modèle bonus : uniquement sur les clients prédits éligibles (pas les 0)
+clients_eligibles = all_clients.join(
+    scores_eligibilite.filter("eligible_predit = 1").select("client_id"), "client_id"
+)
+scores_produit = pipeline_produit.transform(clients_eligibles) \
+    .select("client_id", "produit_predit", "probability") \
+    .withColumnRenamed("probability", "probabilite_produit")
+
+# 3) Assemblage final : un client non éligible n'a pas de produit_predit (NULL, normal)
+scores = scores_eligibilite.join(scores_produit, "client_id", "left")
 scores.coalesce(8).write.mode("overwrite").parquet("s3a://ml-scoring/scores_clients/")
 ```
-`probability` contient désormais un **vecteur de 3 probabilités** (une par produit), pas un seul chiffre comme en binaire — utile pour montrer en dashboard non seulement le produit le plus probable, mais aussi la confiance du modèle.
+`probabilite_eligibilite` est un vecteur à 2 valeurs (binaire) ; `probabilite_produit` un vecteur à 3 valeurs (une par produit), présent uniquement pour les clients prédits éligibles — les autres ont `produit_predit`/`probabilite_produit` à `NULL`, ce qui est le comportement attendu (la question "lequel des 3" ne se pose pas pour eux).
 
-Le reste du Sprint 3 (DAG Airflow, Spark Thrift Server, connexion Power BI) ne change pas dans sa structure — seul le contenu de `scoring_batch.py` est mis à jour ci-dessus.
+Le reste du Sprint 3 (DAG Airflow, Spark Thrift Server, connexion Power BI) ne change pas dans sa structure — seul le contenu de `scoring_batch.py` est mis à jour ci-dessus, et le dashboard Power BI doit maintenant distinguer les deux taux (taux d'éligibilité global, puis répartition produit parmi les éligibles).
 
 ---
 
-## 9. Glossaire (ajouts multi-classes)
+## 9. Glossaire (ajouts multi-classes + recadrage éligibilité)
 
 | Terme | Définition |
 |---|---|
-| Classification multi-classes | Prédire une cible parmi plus de 2 catégories possibles (ici : 3 produits) |
+| **Modèle principal (éligibilité)** | Modèle **binaire** entraîné sur `dataset_eligibilite` (toute la population) : le client détient-il un produit d'épargne, oui/non |
+| **Modèle bonus (produit)** | Modèle **multi-classes** entraîné sur `dataset_produit` (sous-ensemble éligible uniquement) : lequel des 3 produits |
+| `label_eligibilite` | Colonne binaire (0/1) ajoutée à `dataset_final` à l'ÉTAPE 5bis — 1 si `label_nom` non nul après jointure avec `cible` |
+| `dataset_eligibilite` | Sortie Parquet, population complète, cible = `label_eligibilite` |
+| `dataset_produit` | Sortie Parquet, sous-ensemble `label_eligibilite = 1`, cible = `label_code`/`label_nom` |
+| Classification multi-classes | Prédire une cible parmi plus de 2 catégories possibles (ici : 3 produits, uniquement chez les éligibles) |
 | `StringIndexer` | Convertit une colonne texte en indices numériques pour l'entraînement |
 | `IndexToString` | Opération inverse : retrouve le texte à partir de l'indice prédit |
-| `Pipeline` (MLlib) | Enchaîne plusieurs étapes de transformation + modèle comme une seule unité réutilisable |
+| `Pipeline` (MLlib) | Enchaîne plusieurs étapes de transformation + modèle comme une seule unité réutilisable — un par modèle ici (`pipeline_eligibilite_v1`, `pipeline_multiclasse_v1`) |
 | F1 pondéré | Métrique combinant précision et rappel, moyenne sur toutes les classes, pondérée par leur effectif |
 | Matrice de confusion | Tableau croisant classe réelle × classe prédite, pour voir précisément quelles confusions le modèle fait |
 
 ---
 
-## 10. Checklist finale (mise à jour)
+## 10. Checklist finale (mise à jour — recadrage éligibilité/produit)
 
 - [x] Environnement Docker fonctionnel sur les deux machines
 - [x] Données ingérées dans `raw-data` (NiFi + méthode de secours `mc`)
-- [ ] Fichiers étudiés, grille de la section 6 remplie
-- [ ] Table cible (client → produit) identifiée et confirmée avec l'encadrant
-- [ ] Noms/codes exacts des 3 produits confirmés (vs. notes section 0)
-- [ ] Jointure features + cible réalisée
-- [ ] Cible encodée (`StringIndexer`), déséquilibre des classes traité
-- [ ] Au moins 3 algorithmes multi-classes comparés (F1 pondéré)
-- [ ] Pipeline final sauvegardé
-- [ ] Scoring batch multi-classes opérationnel
-- [ ] DAG Airflow, Power BI, tests bout en bout, livrables (inchangé section 8 du guide précédent)
+- [x] Fichiers étudiés, grille de la section 6 remplie
+- [x] Table cible (client → produit) identifiée et confirmée avec l'encadrant
+- [x] Noms/codes exacts des 3 produits confirmés (vs. notes section 0)
+- [x] **Recadrage identifié et corrigé dans `build_dataset_final.py`** : éligibilité (4ᵉ classe "aucun produit") séparée du choix du produit — deux datasets écrits (`dataset_eligibilite`, `dataset_produit`)
+- [ ] **`EDA_final.ipynb` mis à jour** pour lire/nettoyer `dataset_eligibilite`/`dataset_produit` séparément (au lieu de l'ancien dataset unique) — **à faire**
+- [ ] **Notebook de pipeline d'entraînement mis à jour** pour entraîner les deux modèles séparément (au lieu d'un seul multi-classes) — **à faire**
+- [ ] Modèle principal (éligibilité, binaire) entraîné et évalué (`BinaryClassificationEvaluator`)
+- [ ] Modèle bonus (produit, multi-classes) entraîné et évalué (`MulticlassClassificationEvaluator`, ≥3 algorithmes comparés, F1 pondéré)
+- [ ] Déséquilibre des classes traité pour les deux modèles (pondération + Tomek Links pour le multi-classes, uniquement sur `dataset_produit`)
+- [ ] Les deux `Pipeline` (MLlib) sauvegardés séparément (`pipeline_eligibilite_v1`, `pipeline_multiclasse_v1`)
+- [ ] Scoring batch en cascade opérationnel (éligibilité sur tous, puis produit sur les éligibles uniquement — section 8)
+- [ ] DAG Airflow, Power BI (dashboard distinguant taux d'éligibilité et répartition produit), tests bout en bout, livrables — **mentionner le recadrage dans le rapport comme un oubli identifié et corrigé**
