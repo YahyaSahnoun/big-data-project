@@ -1,0 +1,125 @@
+:: loading settings :: url = jar:file:/opt/spark/jars/ivy-2.5.1.jar!/org/apache/ivy/core/settings/ivysettings.xml
+Ivy Default Cache set to: /tmp/.ivy2/cache
+The jars for the packages stored in: /tmp/.ivy2/jars
+org.apache.hadoop#hadoop-aws added as a dependency
+com.amazonaws#aws-java-sdk-bundle added as a dependency
+:: resolving dependencies :: org.apache.spark#spark-submit-parent-b909a282-a5a4-4c21-9c94-800009bfc3e7;1.0
+	confs: [default]
+	found org.apache.hadoop#hadoop-aws;3.3.4 in central
+	found com.amazonaws#aws-java-sdk-bundle;1.12.262 in central
+	found org.wildfly.openssl#wildfly-openssl;1.0.7.Final in central
+:: resolution report :: resolve 328ms :: artifacts dl 14ms
+	:: modules in use:
+	com.amazonaws#aws-java-sdk-bundle;1.12.262 from central in [default]
+	org.apache.hadoop#hadoop-aws;3.3.4 from central in [default]
+	org.wildfly.openssl#wildfly-openssl;1.0.7.Final from central in [default]
+	---------------------------------------------------------------------
+	|                  |            modules            ||   artifacts   |
+	|       conf       | number| search|dwnlded|evicted|| number|dwnlded|
+	---------------------------------------------------------------------
+	|      default     |   3   |   0   |   0   |   0   ||   3   |   0   |
+	---------------------------------------------------------------------
+:: retrieving :: org.apache.spark#spark-submit-parent-b909a282-a5a4-4c21-9c94-800009bfc3e7
+	confs: [default]
+	0 artifacts copied, 3 already retrieved (0kB/15ms)
+26/07/10 10:00:24 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/07/10 10:00:25 INFO SparkContext: Running Spark version 3.5.1
+26/07/10 10:00:25 INFO SparkContext: OS info Linux, 6.18.7-76061807-generic, amd64
+26/07/10 10:00:25 INFO SparkContext: Java version 11.0.22
+26/07/10 10:00:25 INFO ResourceUtils: ==============================================================
+26/07/10 10:00:25 INFO ResourceUtils: No custom resources configured for spark.driver.
+26/07/10 10:00:25 INFO ResourceUtils: ==============================================================
+26/07/10 10:00:25 INFO SparkContext: Submitted application: scoring_epargne_construction_dataset
+26/07/10 10:00:25 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(memory -> name: memory, amount: 1024, script: , vendor: , offHeap -> name: offHeap, amount: 0, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+26/07/10 10:00:25 INFO ResourceProfile: Limiting resource is cpu
+26/07/10 10:00:25 INFO ResourceProfileManager: Added ResourceProfile id: 0
+26/07/10 10:00:25 INFO SecurityManager: Changing view acls to: spark
+26/07/10 10:00:25 INFO SecurityManager: Changing modify acls to: spark
+26/07/10 10:00:25 INFO SecurityManager: Changing view acls groups to: 
+26/07/10 10:00:25 INFO SecurityManager: Changing modify acls groups to: 
+26/07/10 10:00:25 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: spark; groups with view permissions: EMPTY; users with modify permissions: spark; groups with modify permissions: EMPTY
+26/07/10 10:00:26 INFO Utils: Successfully started service 'sparkDriver' on port 35673.
+26/07/10 10:00:26 INFO SparkEnv: Registering MapOutputTracker
+26/07/10 10:00:26 INFO SparkEnv: Registering BlockManagerMaster
+26/07/10 10:00:26 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+26/07/10 10:00:26 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+26/07/10 10:00:26 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+26/07/10 10:00:26 INFO DiskBlockManager: Created local directory at /tmp/blockmgr-f9d0d89c-668c-429d-8549-c3bb6c2b6391
+26/07/10 10:00:26 INFO MemoryStore: MemoryStore started with capacity 434.4 MiB
+26/07/10 10:00:26 INFO SparkEnv: Registering OutputCommitCoordinator
+26/07/10 10:00:26 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+26/07/10 10:00:26 INFO Utils: Successfully started service 'SparkUI' on port 4040.
+26/07/10 10:00:26 INFO SparkContext: Added JAR file:///tmp/.ivy2/jars/org.apache.hadoop_hadoop-aws-3.3.4.jar at spark://e0da7a42f0b4:35673/jars/org.apache.hadoop_hadoop-aws-3.3.4.jar with timestamp 1783677625627
+26/07/10 10:00:26 INFO SparkContext: Added JAR file:///tmp/.ivy2/jars/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar at spark://e0da7a42f0b4:35673/jars/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar with timestamp 1783677625627
+26/07/10 10:00:26 INFO SparkContext: Added JAR file:///tmp/.ivy2/jars/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar at spark://e0da7a42f0b4:35673/jars/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar with timestamp 1783677625627
+26/07/10 10:00:26 INFO SparkContext: Added file file:///tmp/.ivy2/jars/org.apache.hadoop_hadoop-aws-3.3.4.jar at spark://e0da7a42f0b4:35673/files/org.apache.hadoop_hadoop-aws-3.3.4.jar with timestamp 1783677625627
+26/07/10 10:00:26 INFO Utils: Copying /tmp/.ivy2/jars/org.apache.hadoop_hadoop-aws-3.3.4.jar to /tmp/spark-750bcb16-7b3b-42ca-9da0-775790d683c9/userFiles-37d46aec-2bf8-41ce-b810-1905667c29f4/org.apache.hadoop_hadoop-aws-3.3.4.jar
+26/07/10 10:00:26 INFO SparkContext: Added file file:///tmp/.ivy2/jars/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar at spark://e0da7a42f0b4:35673/files/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar with timestamp 1783677625627
+26/07/10 10:00:26 INFO Utils: Copying /tmp/.ivy2/jars/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar to /tmp/spark-750bcb16-7b3b-42ca-9da0-775790d683c9/userFiles-37d46aec-2bf8-41ce-b810-1905667c29f4/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar
+26/07/10 10:00:27 INFO SparkContext: Added file file:///tmp/.ivy2/jars/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar at spark://e0da7a42f0b4:35673/files/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar with timestamp 1783677625627
+26/07/10 10:00:27 INFO Utils: Copying /tmp/.ivy2/jars/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar to /tmp/spark-750bcb16-7b3b-42ca-9da0-775790d683c9/userFiles-37d46aec-2bf8-41ce-b810-1905667c29f4/org.wildfly.openssl_wildfly-openssl-1.0.7.Final.jar
+26/07/10 10:00:28 INFO StandaloneAppClient$ClientEndpoint: Connecting to master spark://spark-master:7077...
+26/07/10 10:00:28 INFO TransportClientFactory: Successfully created connection to spark-master/172.18.0.2:7077 after 32 ms (0 ms spent in bootstraps)
+26/07/10 10:00:29 INFO StandaloneSchedulerBackend: Connected to Spark cluster with app ID app-20260710100028-0005
+26/07/10 10:00:29 INFO StandaloneAppClient$ClientEndpoint: Executor added: app-20260710100028-0005/0 on worker-20260710075807-172.18.0.5-46107 (172.18.0.5:46107) with 2 core(s)
+26/07/10 10:00:29 INFO StandaloneSchedulerBackend: Granted executor ID app-20260710100028-0005/0 on hostPort 172.18.0.5:46107 with 2 core(s), 1024.0 MiB RAM
+26/07/10 10:00:29 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 46015.
+26/07/10 10:00:29 INFO NettyBlockTransferService: Server created on e0da7a42f0b4:46015
+26/07/10 10:00:29 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+26/07/10 10:00:29 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, e0da7a42f0b4, 46015, None)
+26/07/10 10:00:30 INFO BlockManagerMasterEndpoint: Registering block manager e0da7a42f0b4:46015 with 434.4 MiB RAM, BlockManagerId(driver, e0da7a42f0b4, 46015, None)
+26/07/10 10:00:30 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, e0da7a42f0b4, 46015, None)
+26/07/10 10:00:30 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, e0da7a42f0b4, 46015, None)
+26/07/10 10:00:30 INFO StandaloneAppClient$ClientEndpoint: Executor updated: app-20260710100028-0005/0 is now RUNNING
+26/07/10 10:00:31 INFO StandaloneSchedulerBackend: SchedulerBackend is ready for scheduling beginning after reached minRegisteredResourcesRatio: 0.0
+26/07/10 10:00:33 WARN MetricsConfig: Cannot locate configuration: tried hadoop-metrics2-s3a-file-system.properties,hadoop-metrics2.properties
+^CERROR:root:Exception while sending command.
+Traceback (most recent call last):
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/clientserver.py", line 511, in send_command
+    answer = smart_decode(self.stream.readline()[:-1])
+RuntimeError: reentrant call inside <_io.BufferedReader name=3>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1038, in send_command
+    response = connection.send_command(command)
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/clientserver.py", line 539, in send_command
+    raise Py4JNetworkError(
+py4j.protocol.Py4JNetworkError: Error while sending or receiving
+ERROR:root:Exception while sending command.
+Traceback (most recent call last):
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/clientserver.py", line 511, in send_command
+    answer = smart_decode(self.stream.readline()[:-1])
+  File "/usr/lib/python3.8/socket.py", line 669, in readinto
+    return self._sock.recv_into(b)
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/context.py", line 381, in signal_handler
+    self.cancelAllJobs()
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/context.py", line 2446, in cancelAllJobs
+    self._jsc.sc().cancelAllJobs()
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1322, in __call__
+    return_value = get_return_value(
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py", line 179, in deco
+    return f(*a, **kw)
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/protocol.py", line 334, in get_return_value
+    raise Py4JError(
+py4j.protocol.Py4JError: An error occurred while calling o26.sc
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1038, in send_command
+    response = connection.send_command(command)
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/clientserver.py", line 539, in send_command
+    raise Py4JNetworkError(
+py4j.protocol.Py4JNetworkError: Error while sending or receiving
+Traceback (most recent call last):
+  File "/opt/spark/work-dir/build_dataset_final.py", line 66, in <module>
+    solde_1   = read_csv("ATT_PROD_EPARGNE_SOLDE_2025*.txt")
+  File "/opt/spark/work-dir/build_dataset_final.py", line 38, in read_csv
+    spark.read
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py", line 740, in csv
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1322, in __call__
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py", line 179, in deco
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/protocol.py", line 334, in get_return_value
+py4j.protocol.Py4JError: An error occurred while calling o83.csv
