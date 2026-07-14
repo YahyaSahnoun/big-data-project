@@ -1,0 +1,1 @@
+{"class":"org.apache.spark.ml.feature.ImputerModel","timestamp":1784017653501,"sparkVersion":"4.1.2","uid":"Imputer_cfff058ceafe","paramMap":{"inputCols":["solde_volatilite_relative"],"outputCols":["solde_volatilite_relative_imp"],"strategy":"median"},"defaultParamMap":{"missingValue":"NaN","outputCol":"Imputer_cfff058ceafe__output","relativeError":0.001,"strategy":"mean"}}
