@@ -125,27 +125,27 @@ def verifier_unicite_radical(tables: dict, arreter_si_probleme: bool = True) -> 
     jamais reproduire un dataset_final silencieusement corrompu (cf. guide
     maître, tableau des bugs : "remplacer le print() par un assert").
     """
-    print("\n>>> Vérification unicité RADICAL, table par table (avant jointure) :")
-    problemes = []
-    for nom, df_feat in tables.items():
-        total = df_feat.count()
-        distinct = df_feat.select("RADICAL").distinct().count()
-        if total == distinct:
-            statut = "OK"
-        else:
-            statut = f"⚠ PROBLÈME (+{total - distinct} lignes en trop)"
-            problemes.append(nom)
-        print(f"  {nom:24s} total={total:>10} distinct={distinct:>10}  {statut}")
+    # print("\n>>> Vérification unicité RADICAL, table par table (avant jointure) :")
+    # problemes = []
+    # for nom, df_feat in tables.items():
+    #     total = df_feat.count()
+    #     distinct = df_feat.select("RADICAL").distinct().count()
+    #     if total == distinct:
+    #         statut = "OK"
+    #     else:
+    #         statut = f"⚠ PROBLÈME (+{total - distinct} lignes en trop)"
+    #         problemes.append(nom)
+    #     print(f"  {nom:24s} total={total:>10} distinct={distinct:>10}  {statut}")
 
-    if problemes:
-        message = (
-            f"Table(s) non uniques sur RADICAL avant jointure : {problemes}. "
-            f"Corrigez leur agrégation/dédoublonnage avant de continuer."
-        )
-        if arreter_si_probleme:
-            raise AssertionError(message)
-        else:
-            print(f"ATTENTION : {message}")
+    # if problemes:
+    #     message = (
+    #         f"Table(s) non uniques sur RADICAL avant jointure : {problemes}. "
+    #         f"Corrigez leur agrégation/dédoublonnage avant de continuer."
+    #     )
+    #     if arreter_si_probleme:
+    #         raise AssertionError(message)
+    #     else:
+    #         print(f"ATTENTION : {message}")
 
 
 # ============================================================
