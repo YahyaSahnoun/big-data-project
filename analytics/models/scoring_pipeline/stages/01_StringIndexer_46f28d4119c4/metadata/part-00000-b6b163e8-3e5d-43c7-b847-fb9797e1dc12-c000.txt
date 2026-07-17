@@ -1,0 +1,1 @@
+{"class":"org.apache.spark.ml.feature.StringIndexerModel","timestamp":1784276787267,"sparkVersion":"4.1.2","uid":"StringIndexer_46f28d4119c4","paramMap":{"handleInvalid":"keep","inputCol":"TAILLE_ENTREPRI","outputCol":"TAILLE_ENTREPRI_idx"},"defaultParamMap":{"handleInvalid":"error","outputCol":"StringIndexer_46f28d4119c4__output","stringOrderType":"frequencyDesc"}}
