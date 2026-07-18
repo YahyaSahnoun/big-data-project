@@ -42,7 +42,9 @@ Les chiffres notés par l'encadrant (53, 18, et probablement 09 mal lu "03") son
 > 1. **Modèle principal — éligibilité** (binaire) : le client détient-il un produit d'épargne (n'importe lequel des 3) ou aucun ? Entraîné sur la **totalité** de `dataset_final`.
 > 2. **Modèle bonus — lequel des 3 produits** (multi-classes) : n'a de sens que si la réponse à la question précédente est "oui" — entraîné **uniquement** sur le sous-ensemble éligible.
 >
-> `build_dataset_final.py` a été mis à jour en conséquence (section 6.4ter ci-dessous détaille le changement). **`EDA_final.ipynb` et le notebook de pipeline d'entraînement ne le sont pas encore** — ils référencent toujours les anciens chemins `dataset_train_produits`/`dataset_a_scorer` et l'ancien cadrage à un seul modèle multi-classes. C'est le prochain chantier (voir checklist, section 10).
+> `build_dataset_final.py` a été mis à jour en conséquence (section 6.4ter ci-dessous détaille le changement), et **`EDA_final.ipynb` l'est désormais aussi** (paramétré par `DATASET_CIBLE`, garde-fou anti-fuite, cf. section 6.5). **Le notebook de pipeline d'entraînement ne l'est pas encore** — il référence toujours les anciens chemins `dataset_train_produits`/`dataset_a_scorer` et l'ancien cadrage à un seul modèle multi-classes. C'est le prochain chantier (voir checklist, section 10).
+>
+> ⚠️ **Mise à jour (session full-bucket, voir section 8bis) : chantier partiellement avancé, périmètre à corriger.** Un fichier `pipeline_training_hardcoder.ipynb` (distinct de `EDA_final.ipynb`, non paramétré par `DATASET_CIBLE`) a été repris et mis à jour pour lire l'intégralité du bucket MinIO au lieu d'un seul parquet local — mais **uniquement pour le modèle principal (éligibilité, binaire)**. Le modèle bonus (produit, multi-classes) n'a **pas** été touché durant cette session : `pipeline_training_hardcoder.ipynb`, malgré son nom, ne couvre qu'un seul des deux modèles attendus par le recadrage ci-dessus. Le dupliquer/paramétrer pour `dataset_produit` reste à faire (checklist section 10).
 
 **Conséquence sur la modélisation** : ce n'est **pas** un seul modèle multi-classes entraîné sur une cible partiellement inconnue, mais **deux modèles séparés** : un modèle binaire d'éligibilité entraîné sur toute la population, et un modèle multi-classes (3 classes : `53`/`09`/`18`) entraîné uniquement sur les clients éligibles. Détails techniques en section 7.
 
@@ -532,7 +534,11 @@ Deux features manquantes ont aussi été comblées à cette occasion (le pipelin
 
 Une fois `dataset_eligibilite` et `dataset_produit` écrits dans `processed-data`, ils deviennent l'entrée de deux entraînements séparés en section 7 : `dataset_eligibilite` → modèle binaire (`BinaryClassificationEvaluator`), `dataset_produit` → modèle multi-classes (`StringIndexer` sur `label_nom`, `MulticlassClassificationEvaluator`, section 7.7). Le scoring batch (section 8) applique les deux pipelines en cascade : d'abord l'éligibilité sur tout le monde, puis le produit uniquement sur les clients prédits éligibles.
 
-⚠️ **Pas encore fait** : `EDA_final.ipynb` et le notebook de pipeline d'entraînement lisent encore les anciens chemins (`dataset_train_produits`/`dataset_a_scorer`) et l'ancien cadrage à un seul modèle. Ils doivent être mis à jour pour pointer vers `dataset_eligibilite`/`dataset_produit` et dupliquer/adapter les étapes d'entraînement pour les deux modèles avant de relancer la Partie 1 du notebook EDA.
+✅ **Fait pour `EDA_final.ipynb`** (voir section 6.5 mise à jour) : paramétré par `DATASET_CIBLE` (`"eligibilite"`/`"produit"`), garde-fou anti-fuite (`label_nom`/`label_code` retirés des features sur `dataset_eligibilite`, `label_eligibilite` retiré sur `dataset_produit`), bornes IQR/imputer distincts par dataset.
+
+⚠️ **Partiellement fait (mis à jour, session full-bucket — section 8bis)** : `pipeline_training_hardcoder.ipynb` a été corrigé pour lire `processed-data/dataset_eligibilite_final/` (bucket MinIO complet, 33 parquets, au lieu d'un seul fichier local) — mais **uniquement pour le modèle principal (éligibilité)**. Il ne consomme toujours pas `dataset_produit` et ne couvre pas le modèle bonus (multi-classes). Le dupliquer/paramétrer par `DATASET_CIBLE` (comme `EDA_final.ipynb` l'est déjà) pour couvrir aussi le modèle produit reste à faire.
+>
+> ⚠️ **Écart de nommage constaté sur le bucket réel** : le dossier brut observé dans `processed-data/` s'appelle `dataset_eligibilite/` (sans les anciens noms `dataset_train_produits`), ce qui correspond bien au nommage ci-dessus — mais le dossier voisin s'appelle `dataset_produits/` (avec un **s**) dans le bucket réel, alors que ce document et le script utilisent `dataset_produit` (sans **s**) partout ailleurs. À vérifier avant de brancher l'entraînement du modèle produit : soit le script écrit réellement avec un **s** et cette section doit être corrigée, soit le dossier observé est un ancien résidu à renommer/supprimer.
 
 #### État des points bloquants
 
@@ -588,7 +594,7 @@ Cette section explique **les méthodes disponibles et leur syntaxe**, à adapter
 
 **Ce plan initial est dépassé — tout est maintenant implémenté dans `EDA_final.ipynb`**, le notebook consolidé qui fait référence pour cette étape. Ne pas repartir de zéro avec les extraits de code ci-dessous, qui datent d'avant l'implémentation réelle et sont conservés uniquement pour l'historique des décisions.
 
-⚠️ **Écart connu (recadrage section 0/6.4ter)** : le tableau ci-dessous décrit `EDA_final.ipynb` tel qu'il existe **avant** le recadrage éligibilité/produit — il lit encore un seul dataset en entrée et écrit encore `dataset_train_produits_final`/`dataset_a_scorer_final`. La logique de nettoyage (doublons, nulls, imputation, plafonnement) reste valable telle quelle et n'a pas besoin d'être réécrite ; ce qui doit changer, c'est l'entrée (lire `dataset_eligibilite` en plus de/à la place de l'ancien dataset unique) et la sortie (produire les deux jeux nettoyés séparément, un par modèle) — pas encore fait.
+✅ **Mis à jour (recadrage section 0/6.4ter)** : `EDA_final.ipynb` est désormais paramétré par une variable `DATASET_CIBLE` (`"eligibilite"` ou `"produit"`, cellule de config) et s'exécute **une fois par dataset** — deux passes complètes, chacune avec ses propres bornes IQR/imputer (les deux populations n'ont pas la même distribution). Un garde-fou anti-fuite retire explicitement `label_nom`/`label_code` des features quand `DATASET_CIBLE = "eligibilite"` (ces colonnes ne sont non-nulles que pour les clients éligibles — les garder reviendrait à donner la réponse au modèle), et retire `label_eligibilite` quand `DATASET_CIBLE = "produit"` (constante = 1 sur ce sous-ensemble, donc sans information). Toutes les analyses "vs. cible" de la Partie 2 utilisent une variable `COL_CIBLE` générique au lieu de `label_nom` en dur, pour fonctionner identiquement sur les deux passes. Au passage, un bug préexistant a été corrigé : `anciennete_digitale_jours`/`recence_gab_jours` étaient recalculées une seconde fois dans le notebook avec `current_date()`, écrasant silencieusement les valeurs correctes déjà calculées par `build_dataset_final.py` par rapport à `DATE_REFERENCE` — même correctif appliqué aux diagnostics d'âge. La logique de nettoyage proprement dite (doublons, nulls, imputation, plafonnement IQR) n'a pas eu besoin d'être réécrite, seulement paramétrée.
 
 **Ce que fait `EDA_final.ipynb`, dans l'ordre :**
 
@@ -605,9 +611,10 @@ Cette section explique **les méthodes disponibles et leur syntaxe**, à adapter
 **Fonctionnement local → cluster** : un seul flag `LOCAL_MODE` en haut du notebook bascule tous les chemins (données, modèle d'imputation, bornes IQR) entre un test sur un fichier local et le bucket MinIO complet. La sauvegarde des bornes IQR bascule automatiquement entre fichier JSON local (`open()`/`json.dump()`) et écriture via un DataFrame Spark sur `s3a://` (obligatoire : `open()` ne fonctionne pas sur un chemin `s3a://`).
 
 **Sorties produites** :
-- `dataset_train_produits_final` / `dataset_a_scorer_final` (Parquet, `processed-data/`)
+- ⚠️ Noms corrigés (session full-bucket, section 8bis) : les chemins `dataset_train_produits_final`/`dataset_a_scorer_final` ci-dessus sont les **anciens** noms, obsolètes. Le bucket réel ne contient que `dataset_eligibilite/` et `dataset_produits/` — il n'existe **pas** de jeu de données séparé à scorer (`dataset_a_scorer`) pour l'instant. La sortie EDA réelle pour le modèle d'éligibilité est donc `processed-data/dataset_eligibilite_final/` (Parquet).
 - Modèle d'imputation : `s3a://ml-scoring/models/imputer_anciennete_recence`
 - Bornes de plafonnement : `s3a://ml-scoring/models/outlier_bounds/`
+- Modèle final (après entraînement, section 7/8bis) : `s3a://ml-scoring/models/scoring_pipeline*` — trois fichiers compagnons (`_encodeur`, `_sklearn.joblib`, `_meta.joblib` contenant le seuil de décision retenu, cf. 8bis.5)
 
 ### 6.5bis Règles de nettoyage détaillées (référence)
 
@@ -690,6 +697,15 @@ docker compose up -d spark-master spark-worker
 ```
 
 Ensuite, `spark-submit --master spark://spark-master:7077 mon_script.py` suffit — plus besoin de `--packages`, et les scripts eux-mêmes peuvent laisser tomber les 5 lignes `.config("spark.hadoop.fs.s3a...")` répétées partout, `SparkSession.builder.appName(...).getOrCreate()` suffit.
+
+⚠️ **Cas particulier, découvert en session (voir 8bis) : notebook Jupyter lancé sur l'hôte (pas dans un conteneur Docker).** Ce qui précède configure le *cluster* (master + workers, dans Docker) — mais si le kernel Jupyter tourne directement sur l'hôte (`~/.venv` local, cas de Tarouzi sous WSL), c'est le processus **driver**, pas les conteneurs, qui exécute `spark.read.parquet("s3a://...")`, et son classpath à lui vient du `pyspark` installé via `pip`/`uv` — qui **n'embarque pas** `hadoop-aws`/`aws-java-sdk-bundle` par défaut. Le fichier `spark-defaults.conf` monté dans les conteneurs ci-dessus ne s'applique pas à ce driver-là. Deux options équivalentes, à ajouter directement dans `get_spark()` du notebook :
+```python
+.config("spark.jars.packages",
+        "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262")
+```
+(télécharge via Maven/Ivy au démarrage de la session — nécessite un accès internet sortant depuis l'hôte), ou, si l'hôte n'a pas d'accès internet, télécharger les deux `.jar` une fois et les référencer en dur via `spark.jars` (chemins locaux absolus, séparés par une virgule). **Dans les deux cas, un redémarrage du kernel est indispensable après l'ajout** — `SparkSession.builder.getOrCreate()` réutilise silencieusement une session déjà active sans jars si le kernel n'est pas relancé.
+
+⚠️ **Autre piège du même type : version de Python driver ≠ version de Python des workers.** Les conteneurs `apache/spark:3.5.1` embarquent leur propre Python (`3.8` dans ce projet, non modifiable facilement — `apt-get install python3.11` échoue, cette version n'étant pas dans les dépôts Ubuntu 20.04/focal des images officielles). Si le driver (venv de l'hôte) tourne sur une autre version mineure de Python, chaque tâche échoue avec `PYSPARK_VERSION_MISMATCH: Python in worker has different version (3, 8) than that in driver 3.x`. La version du driver doit donc être **alignée manuellement sur celle des workers** (vérifier avec `docker exec spark-worker-1 python3 --version`), pas l'inverse — recréer le `.venv` de l'hôte sur cette version précise (`uv python install 3.8 && uv venv --python 3.8 .venv`, voir 8bis.6).
 
 ### 7.1 Vérifier la clé de jointure avant tout
 
@@ -941,6 +957,32 @@ Chiffres égaux → pas de doublons, pas besoin de relancer. Différents → rel
 
 Le nettoyage est une étape **unique et en amont** : on nettoie une fois, on écrit une version propre, puis l'entraînement et le scoring consomment tous les deux cette version — pas besoin de renettoyer à chaque scoring.
 
+### 7.6quater Déséquilibre du modèle d'éligibilité (binaire) : constat et correctifs (session full-bucket)
+
+Les sections 7.6/7.6bis ci-dessus couvrent le déséquilibre **multi-classe** du modèle produit. Le modèle principal (éligibilité) a son propre problème de déséquilibre — la classe positive (`label_eligibilite = 1`) ne représente qu'environ **4,6 %** des lignes sur le dataset complet — et a nécessité un traitement séparé, découvert en entraînant `pipeline_training_hardcoder.ipynb` sur les 33 parquets complets.
+
+**Constat initial (avant correctifs), sur les cinq algorithmes comparés :**
+
+| Modèle | Accuracy | F1 pondéré | F1 macro | F1 classe 1 |
+|---|---|---|---|---|
+| XGBoost | 0,9589 | 0,9400 | 0,5024 | **0,0257** |
+| LightGBM | 0,9592 | 0,9409 | 0,5124 | **0,0456** |
+| RandomForest | 0,7737 | 0,8402 | 0,5141 | 0,1590 (precision ≈ 0,09) |
+| LogisticRegression | 0,6985 | 0,7895 | 0,4827 | 0,1486 (precision ≈ 0,08) |
+| DecisionTree | 0,6917 | 0,7847 | 0,4717 | 0,1307 |
+
+Deux symptômes distincts, deux causes distinctes :
+- **XGBoost/LightGBM** : F1 classe 1 quasi nul malgré un signal réel — le seuil de décision par défaut (0,5 via `.predict()`) est mal calé après SMOTE, qui corrige la distribution du *train* mais pas le seuil de classification au moment de la prédiction.
+- **RandomForest/LogReg/DecisionTree/NaiveBayes** : rappel correct (52-64 %) mais précision très faible (~8-9 %) — la pondération inverse-fréquence brute (section 7.6, `total / (nb_classes × effectif)`) sur-corrige un déséquilibre aussi marqué et pousse le modèle à sur-prédire la classe rare.
+
+**Trois correctifs appliqués (`pipeline_training_hardcoder.ipynb`), par ordre d'impact attendu :**
+
+1. **Réglage du seuil de décision (XGBoost/LightGBM)** — balayage de seuils (0,05 à 0,95) sur `X_val`/`y_val` pour maximiser le F1 classe 1, au lieu du 0,5 par défaut de `.predict()`. Le seuil retenu est sauvegardé à côté du modèle final (`_meta.joblib`) et réappliqué au scoring (section 11/8) via `predict_proba(...) >= seuil`, pas `.predict()`.
+2. **Pondération adoucie (modèles MLlib)** — formule remplacée par une racine carrée : `poids_classe = sqrt(total / (nb_classes × effectif))` au lieu de la formule brute. Compromis plus doux : la classe rare reste sur-pondérée, mais moins agressivement — corrige la précision qui s'effondrait.
+3. **Traitement catégoriel correct de `CODE_VILLE_idx`** — cette colonne (issue d'un `StringIndexer`) est un identifiant de ville, pas une quantité continue. Laissée telle quelle, `SMOTE` l'interpolait entre deux codes ville (non-sens) et XGBoost/LightGBM la traitaient comme un ordre arbitraire entre villes. Remplacé par `SMOTENC` (variante catégorielle de SMOTE, prend le mode plutôt que d'interpoler) + dtype `category` + `enable_categorical=True` côté XGBoost (LightGBM gère nativement les colonnes `category` d'un DataFrame pandas).
+
+**Non fait à ce stade, pistes pour la suite** : réactivation de la recherche d'hyperparamètres (`CrossValidator`/`RandomizedSearchCV`, commentée dans le notebook, jamais relancée depuis le passage au bucket complet) ; évaluation par courbe précision-rappel plutôt qu'au seuil fixe uniquement ; les mêmes correctifs (seuil, pondération douce) pourraient s'appliquer telsquels au modèle produit (section 7.6/7.6bis) si un déséquilibre marqué y est aussi observé une fois ce chantier entamé.
+
 ### 7.7 Évaluer un modèle multi-classes (`MulticlassClassificationEvaluator`)
 
 **Concept** : `BinaryClassificationEvaluator` (utilisé précédemment) ne fonctionne qu'à 2 classes. Il faut son équivalent multi-classe, avec des métriques différentes de l'AUC :
@@ -1037,6 +1079,71 @@ Le reste du Sprint 3 (DAG Airflow, Spark Thrift Server, connexion Power BI) ne c
 
 ---
 
+## 8bis. Journal d'incidents — bascule vers l'entraînement full-bucket (33 parquets)
+
+**Contexte** : jusqu'ici, `EDA.ipynb`/`pipeline_training_hardcoder.ipynb` n'avaient été testés que sur un seul fichier parquet en local (`LOCAL_MODE = True`). Cette session avait pour but de basculer sur le bucket MinIO complet (33 fichiers). Le changement de code lui-même a été trivial (un flag `LOCAL_MODE` à inverser) — la quasi-totalité du temps a été passée à déboguer l'environnement, pas la logique métier. Consigné ici en détail parce que chaque symptôme ressemblait à un problème différent alors que la plupart partageaient la même cause racine (driver Jupyter lancé sur l'hôte WSL, hors du réseau Docker).
+
+### 8bis.1 Chemins MinIO incorrects/obsolètes
+
+Les chemins codés dans `EDA.ipynb` (`dataset_train_produits`, `dataset_a_scorer`) ne correspondaient à **aucun** dossier réel du bucket `processed-data`. Le bucket réel ne contient que `dataset_eligibilite/` et `dataset_produits/` (33 fichiers `.snappy.parquet` + `_SUCCESS`, écriture propre confirmée par timestamp uniforme). **Correctif** : chemins réécrits sur `dataset_eligibilite/` → `dataset_eligibilite_final/`, `PATH_SCORER_IN` mis à `None` (pas encore de jeu à scorer). Voir section 6.4ter pour l'écart de nommage encore ouvert (`dataset_produit` vs `dataset_produits`).
+
+### 8bis.2 Résolution de noms d'hôte (`spark-master`, `minio`) — driver hors réseau Docker
+
+**Symptôme** : `UnknownHostException: spark-master` puis, plus tard, `minio: Temporary failure in name resolution`. **Cause** : les noms `spark-master`/`minio` ne sont résolus que par le DNS interne de Docker Compose — invisibles depuis l'hôte WSL où tourne le kernel Jupyter. **Correctif** : entrées statiques dans `/etc/hosts` (`127.0.0.1 spark-master`, `127.0.0.1 minio`, en s'appuyant sur le fait que les ports 7077/9000 sont publiés vers l'hôte dans le `docker-compose.yml`, section 1). **Piège WSL spécifique** : `/etc/hosts` est régénéré automatiquement à chaque redémarrage de WSL — toute entrée manuelle ajoutée disparaît silencieusement. Fix permanent : `/etc/wsl.conf` →
+```ini
+[network]
+generateHosts = false
+```
+puis `wsl --shutdown` (**depuis PowerShell, pas WSL** — sinon aucun effet) avant de rééditer `/etc/hosts` proprement (attention aussi aux doublons : WSL peut avoir déjà inscrit l'IP de pont Docker réelle, ex. `172.18.0.4 minio`, en plus de l'entrée manuelle — supprimer le doublon, ne garder que `127.0.0.1`).
+
+### 8bis.3 `ClassNotFoundException: S3AFileSystem` puis jars manquants côté driver
+
+Voir désormais section 7.0bis (caveat ajouté) pour le détail et le correctif (`spark.jars.packages` ou `spark.jars` en dur). Le connecteur S3A n'était configuré que côté conteneurs, pas côté driver hôte.
+
+### 8bis.4 `SparkContext` arrêté réutilisé silencieusement
+
+**Symptôme récurrent** (revenu plusieurs fois) : `IllegalStateException: Cannot call methods on a stopped SparkContext`, y compris juste après avoir corrigé autre chose. **Cause** : `SparkSession.builder.getOrCreate()` réutilise un `SparkContext` existant dans le kernel Python, même arrêté/mort — modifier la config (`.config(...)`) n'a aucun effet tant que le kernel n'est pas redémarré, car un nouveau `SparkContext` n'est jamais recréé dans le même processus. **Règle à retenir** : après **toute** modification de configuration Spark (jars, hôte du driver, etc.), redémarrer le kernel Jupyter avant de retester — jamais se contenter de ré-exécuter la cellule.
+
+### 8bis.5 Executors qui n'arrivent jamais à s'enregistrer — deux causes distinctes
+
+**a) Ressources déjà prises par une application zombie.** Le cluster de ce projet n'a que 2 cœurs / 1,5 Go au total (`docker-compose.yml`, section 1). Une application Spark restée active après un crash/redémarrage de kernel (le driver a disparu, mais le master ne le sait pas) continue de bloquer tout le cluster — nouvelle soumission qui reste indéfiniment sur `WARN TaskSchedulerImpl: Initial job has not accepted any resources`. **Diagnostic** : `http://localhost:8080` (UI du master) → onglet Running Applications. **Correctif** : tuer l'application bloquée (bouton `(kill)` dans l'UI, ou `spark-class org.apache.spark.deploy.Client kill ...` en ligne de commande).
+
+**b) `spark.driver.host` mal détecté.** Même une fois les ressources libres, les executors du worker (dans Docker) tentaient de rappeler le driver sur `10.255.255.254` — l'adresse NAT interne de WSL, injoignable depuis le réseau Docker. Chaque executor démarrait puis mourait immédiatement (`exit code 1`, en boucle). **Correctif**, dans `get_spark()` :
+```python
+import socket
+_s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+_s.connect(("8.8.8.8", 80))   # aucun paquet réellement envoyé, juste pour lire l'IP source locale
+DRIVER_HOST_IP = _s.getsockname()[0]
+_s.close()
+# ... puis dans le builder :
+.config("spark.driver.host", DRIVER_HOST_IP)
+.config("spark.driver.bindAddress", "0.0.0.0")
+```
+
+### 8bis.6 Incompatibilité de version Python — la cause la plus coûteuse en temps
+
+Trois couches d'incompatibilité empilées, découvertes une par une :
+1. **PySpark 4.1.2 (pip, dernière version) vs Spark 3.5.1 (conteneurs)** — le protocole RPC driver↔master diffère entre versions majeures ; le `SparkContext` s'auto-arrêtait juste après connexion (`Cannot call methods on a stopped SparkContext`, créé puis arrêté dans le même appel). **Correctif** : épingler `pyspark==3.5.1` (identique à l'image `apache/spark:3.5.1`).
+2. **Python 3.14 (venv hôte) trop récent pour `cloudpickle` (embarqué dans PySpark 3.5.1)** — `RecursionError: Stack overflow ... when serializing function reconstructor`, en boucle, dès qu'une fonction Python devait être sérialisée pour un executor. `distutils`, retiré de la stdlib en Python 3.12+, causait aussi un `ModuleNotFoundError` séparé sur `pandas`/`pyspark.sql.pandas`. **Correctif** : recréer le `.venv` sur une version de Python largement supportée par PySpark 3.5.1, via `uv` (les dépôts Ubuntu de la distro ne proposaient plus que Python 3.13/3.14, `apt install python3.11` introuvable) :
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   uv python install 3.11
+   uv venv --python 3.11 .venv
+   ```
+3. **Python 3.11 (driver) ≠ Python 3.8 (workers, image `apache/spark:3.5.1`)** — `PySparkRuntimeError: [PYTHON_VERSION_MISMATCH] Python in worker has different version (3, 8) than that in driver 3.11`. Les conteneurs Spark n'ont que Python 3.8, non extensible (dépôts `focal` sans `python3.11`, `deadsnakes` non installé). **Correctif final** : recréer le `.venv` une seconde fois, sur Python **3.8** cette fois (`uv python install 3.8 && uv venv --python 3.8 .venv`), pour aligner le driver sur les workers plutôt que l'inverse. Voir aussi le caveat ajouté en section 7.0bis.
+
+**Retenir pour la suite du projet** : la version de Python du driver (`.venv` de l'hôte) doit toujours être verrouillée sur celle des workers (`docker exec spark-worker-1 python3 --version`), **avant** d'installer quoi que ce soit d'autre — pas déduite après coup par essais-erreurs. Documenter cette contrainte quelque part de visible (ex. `README.md` du dépôt) pour ne pas la reperdre.
+
+### 8bis.7 Incident annexe : édition automatisée ayant corrompu des cellules de notebook
+
+Lors d'une correction automatisée (ajout de `DRIVER_HOST_IP`, 8bis.5), un script d'édition mal borné a réécrit **toutes** les cellules de code des deux notebooks au lieu de la seule cellule ciblée, et une erreur de découpage de chaîne a vidé le contenu des cellules à une seule ligne sans retour à la ligne final (3 cellules dans `EDA.ipynb`, 3 dans `pipeline_training_hardcoder.ipynb` — dont une perte de la dernière ligne d'une cellule de sauvegarde). **Détecté** par une relecture manuelle ("ça semblait plus long avant"), pas automatiquement. **Correctif** : diff cellule-par-cellule contre les fichiers originaux, restauration des cellules touchées, revérification syntaxique complète des deux notebooks. **Leçon** : après toute édition automatisée d'un notebook, differ chaque cellule contre la version précédente avant de considérer l'édition terminée — une édition "ciblée" peut avoir des effets de bord silencieux ailleurs dans le fichier.
+
+### 8bis.8 Résultat à l'issue de la session
+
+`EDA.ipynb` a traité les 33 parquets de `dataset_eligibilite/` avec succès (nettoyage, imputation, plafonnement — écriture vraisemblablement terminée vers `dataset_eligibilite_final/`, **à confirmer par `mc ls`/console MinIO avant de considérer cette étape définitivement close**). `pipeline_training_hardcoder.ipynb` a ensuite été exécuté sur cette sortie et a produit les résultats commentés en section 7.6quater. Le modèle produit (multi-classes) n'a pas été touché — reste le prochain chantier, cf. section 6.4ter et checklist section 10.
+
+---
+
 ## 9. Glossaire (ajouts multi-classes + recadrage éligibilité)
 
 | Terme | Définition |
@@ -1063,11 +1170,12 @@ Le reste du Sprint 3 (DAG Airflow, Spark Thrift Server, connexion Power BI) ne c
 - [x] Table cible (client → produit) identifiée et confirmée avec l'encadrant
 - [x] Noms/codes exacts des 3 produits confirmés (vs. notes section 0)
 - [x] **Recadrage identifié et corrigé dans `build_dataset_final.py`** : éligibilité (4ᵉ classe "aucun produit") séparée du choix du produit — deux datasets écrits (`dataset_eligibilite`, `dataset_produit`)
-- [ ] **`EDA_final.ipynb` mis à jour** pour lire/nettoyer `dataset_eligibilite`/`dataset_produit` séparément (au lieu de l'ancien dataset unique) — **à faire**
-- [ ] **Notebook de pipeline d'entraînement mis à jour** pour entraîner les deux modèles séparément (au lieu d'un seul multi-classes) — **à faire**
-- [ ] Modèle principal (éligibilité, binaire) entraîné et évalué (`BinaryClassificationEvaluator`)
-- [ ] Modèle bonus (produit, multi-classes) entraîné et évalué (`MulticlassClassificationEvaluator`, ≥3 algorithmes comparés, F1 pondéré)
-- [ ] Déséquilibre des classes traité pour les deux modèles (pondération + Tomek Links pour le multi-classes, uniquement sur `dataset_produit`)
-- [ ] Les deux `Pipeline` (MLlib) sauvegardés séparément (`pipeline_eligibilite_v1`, `pipeline_multiclasse_v1`)
-- [ ] Scoring batch en cascade opérationnel (éligibilité sur tous, puis produit sur les éligibles uniquement — section 8)
-- [ ] DAG Airflow, Power BI (dashboard distinguant taux d'éligibilité et répartition produit), tests bout en bout, livrables — **mentionner le recadrage dans le rapport comme un oubli identifié et corrigé**
+- [x] **`EDA_final.ipynb` mis à jour** : paramétré par `DATASET_CIBLE`, garde-fou anti-fuite, bug `current_date()` corrigé (voir section 6.5)
+- [ ] **(PARTIEL)** **Notebook de pipeline d'entraînement mis à jour** : `pipeline_training_hardcoder.ipynb` lit désormais le bucket MinIO complet (33 parquets) et entraîne le modèle d'éligibilité, mais n'est pas paramétré par `DATASET_CIBLE` et ne couvre pas encore le modèle produit — dupliquer/paramétrer pour `dataset_produit` reste à faire (section 6.4ter, 7.6quater)
+- [x] **Environnement de développement fiabilisé pour le bucket complet** (session, section 8bis) : chemins MinIO corrigés, résolution `/etc/hosts` fixée durablement (`generateHosts = false`), jars S3A côté driver ajoutés, `spark.driver.host`/`bindAddress` forcés, version Python driver alignée sur les workers (3.8) — cf. section 8bis pour le détail, à ne pas reperdre si l'environnement est reconstruit
+- [ ] **(PARTIEL)** Modèle principal (éligibilité, binaire) entraîné et évalué : entraîné et évalué sur le bucket complet (5 algorithmes comparés, section 7.6quater) avec des métriques scikit-learn (`accuracy`/F1/`classification_report`), pas encore via `BinaryClassificationEvaluator` (MLlib) comme prévu initialement — à harmoniser. Déséquilibre traité (seuil, pondération douce, `SMOTENC`) mais résultats encore à améliorer (F1 classe 1 modeste même après correctifs) ; recherche d'hyperparamètres pas encore relancée sur le bucket complet
+- [ ] Modèle bonus (produit, multi-classes) entraîné et évalué (`MulticlassClassificationEvaluator`, ≥3 algorithmes comparés, F1 pondéré) — **non commencé sur le bucket complet**
+- [ ] **(PARTIEL)** Déséquilibre des classes traité pour les deux modèles — **fait pour l'éligibilité** (seuil de décision, pondération adoucie, `SMOTENC` sur `CODE_VILLE_idx`, section 7.6quater) ; **pas encore fait pour le produit** (pondération + Tomek Links, section 7.6/7.6bis, toujours à exécuter sur `dataset_produit`)
+- [ ] Les deux `Pipeline` (MLlib) sauvegardés séparément (`pipeline_eligibilite_v1`, `pipeline_multiclasse_v1`) — le modèle d'éligibilité est actuellement sauvegardé sous `s3a://ml-scoring/models/scoring_pipeline*` (encodeur Spark + modèle sklearn + seuil, pas un unique `PipelineModel` MLlib comme envisagé initialement ; à harmoniser avec le nommage `pipeline_eligibilite_v1` si le rapport doit rester cohérent avec cette convention)
+- [ ] Scoring batch en cascade opérationnel (éligibilité sur tous, puis produit sur les éligibles uniquement — section 8) — bloqué en amont : pas encore de jeu `dataset_a_scorer`/équivalent disponible sur MinIO
+- [ ] DAG Airflow, Power BI (dashboard distinguant taux d'éligibilité et répartition produit), tests bout en bout, livrables — **mentionner le recadrage dans le rapport comme un oubli identifié et corrigé, et le journal d'incidents (section 8bis) comme partie assumée du travail d'industrialisation**
