@@ -1,0 +1,1 @@
+{"class":"org.apache.spark.ml.feature.OneHotEncoderModel","timestamp":1784276804572,"sparkVersion":"4.1.2","uid":"OneHotEncoder_5bcbe6c177fd","paramMap":{"inputCol":"MARITAL_STATUS_idx","outputCol":"MARITAL_STATUS_ohe"},"defaultParamMap":{"dropLast":true,"handleInvalid":"error","outputCol":"OneHotEncoder_5bcbe6c177fd__output"}}
