@@ -114,49 +114,82 @@ services:
   # FIX: chemin relatif "bin/spark-class" invalide car le WORKDIR
   # de cette image est /opt/spark/work-dir -> chemin absolu requis
   # -----------------------------------------------------
+  # -----------------------------------------------------
+  # Spark Master
+  # -----------------------------------------------------
   spark-master:
-    image: jupyter/pyspark-notebook:latest
+    image: apache/spark:3.5.1
     container_name: spark-master
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    hostname: spark-master
+
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+
       SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
+      SPARK_HADOOP_FS_S3A_ACCESS_KEY: minioadmin
+      SPARK_HADOOP_FS_S3A_SECRET_KEY: minioadmin123
       SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
       SPARK_HADOOP_FS_S3A_IMPL: org.apache.hadoop.fs.s3a.S3AFileSystem
+
     ports:
-      - "8080:8080"   # UI Spark master
-      - "7077:7077"   # Port master
+      - "7077:7077"
+      - "8080:8080"
+
     volumes:
       - ./analyse_data:/workspace
-      - spark-data:/opt/spark/work-dir
+
     networks:
       - pipeline-net
+
     mem_limit: 1g
 
+  # -----------------------------------------------------
+  # Spark Worker
+  # -----------------------------------------------------
   spark-worker:
     image: apache/spark:3.5.1
     container_name: spark-worker-1
     hostname: spark-worker-1
+
     depends_on:
       - spark-master
+
     command:
-      [
-        "/opt/spark/bin/spark-class",
-        "org.apache.spark.deploy.worker.Worker",
-        "spark://spark-master:7077",
-        "-c",
-        "2",
-        "-m",
-        "3072M"
-      ]
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - -c
+      - "2"
+      - -m
+      - 3072M
+
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
+
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: 3G
+
       SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
+      SPARK_HADOOP_FS_S3A_ACCESS_KEY: minioadmin
+      SPARK_HADOOP_FS_S3A_SECRET_KEY: minioadmin123
       SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
+      SPARK_HADOOP_FS_S3A_IMPL: org.apache.hadoop.fs.s3a.S3AFileSystem
+
+    volumes:
+      - ./analyse_data:/workspace
+
     networks:
       - pipeline-net
+
     mem_limit: 3g
     # -----------------------------------------------------
   # Jupyter - Spark driver (runs notebooks inside Docker)
