@@ -1,0 +1,1 @@
+{"class":"org.apache.spark.ml.feature.StringIndexerModel","timestamp":1784276780181,"sparkVersion":"4.1.2","uid":"StringIndexer_190eccac1b5a","paramMap":{"handleInvalid":"keep","inputCol":"GENDER","outputCol":"GENDER_idx"},"defaultParamMap":{"handleInvalid":"error","outputCol":"StringIndexer_190eccac1b5a__output","stringOrderType":"frequencyDesc"}}

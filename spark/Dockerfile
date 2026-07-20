@@ -1,15 +1,17 @@
-# Image Spark 3.5 (Bitnami) enrichie avec la stack ML.
-# Le MEME Dockerfile sert au spark-master ET aux spark-worker-*,
-# seule la variable d'environnement SPARK_MODE change au runtime
-# (voir docker-compose.yml). C'est cohérent avec Hadoop : une seule
-# image "worker" pouvait tourner en DataNode ou NodeManager selon
-# le daemon lancé au démarrage.
-
-FROM bitnami/spark:3.5
+FROM apache/spark:3.5.1
 
 USER root
 
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN apt-get update && \
+    apt-get install -y wget && \
+    rm -rf /var/lib/apt/lists/*
 
-USER 1001
+# Hadoop AWS
+RUN wget -P /opt/spark/jars \
+https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+
+# AWS SDK Bundle
+RUN wget -P /opt/spark/jars \
+https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+
+USER spark

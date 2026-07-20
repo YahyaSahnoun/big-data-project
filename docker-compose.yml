@@ -115,7 +115,8 @@ services:
   # de cette image est /opt/spark/work-dir -> chemin absolu requis
   # -----------------------------------------------------
   spark-master:
-    image: apache/spark:3.5.1
+    build:
+      context: ./spark
     container_name: spark-master
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
     environment:
@@ -135,7 +136,8 @@ services:
     mem_limit: 1g
 
   spark-worker:
-    image: apache/spark:3.5.1
+    build:
+      context: ./spark
     container_name: spark-worker-1
     depends_on:
       - spark-master
@@ -208,3 +210,19 @@ services:
     networks:
       - pipeline-net
     mem_limit: 1g
+  
+  jupyter:
+    build:
+      context: ./jupyter
+    container_name: jupyter
+    depends_on:
+      - spark-master
+      - minio
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./analytics:/workspace
+    working_dir: /workspace
+    networks:
+      - pipeline-net
+    mem_limit: 2g
