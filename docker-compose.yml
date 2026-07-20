@@ -115,8 +115,7 @@ services:
   # de cette image est /opt/spark/work-dir -> chemin absolu requis
   # -----------------------------------------------------
   spark-master:
-    build:
-      context: ./spark
+    image: jupyter/pyspark-notebook:latest
     container_name: spark-master
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
     environment:
@@ -136,12 +135,21 @@ services:
     mem_limit: 1g
 
   spark-worker:
-    build:
-      context: ./spark
+    image: apache/spark:3.5.1
     container_name: spark-worker-1
+    hostname: spark-worker-1
     depends_on:
       - spark-master
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "-c", "2", "-m", "3584M"]
+    command:
+      [
+        "/opt/spark/bin/spark-class",
+        "org.apache.spark.deploy.worker.Worker",
+        "spark://spark-master:7077",
+        "-c",
+        "2",
+        "-m",
+        "3072M"
+      ]
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
@@ -149,7 +157,31 @@ services:
       SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
     networks:
       - pipeline-net
-    mem_limit: 4g
+    mem_limit: 3g
+    # -----------------------------------------------------
+  # Jupyter - Spark driver (runs notebooks inside Docker)
+  # -----------------------------------------------------
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter
+    depends_on:
+      - spark-master
+      - spark-worker
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      SPARK_MASTER: spark://spark-master:7077
+      SPARK_DRIVER_MEMORY: 6g
+      SPARK_EXECUTOR_MEMORY: 4g
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./analytics:/home/jovyan/work
+      - ./spark-extra-jars:/home/jovyan/jars
+    networks:
+      - pipeline-net
+    mem_limit: 8g
 
   # -----------------------------------------------------
   # NiFi - ingestion vers MinIO
@@ -210,19 +242,3 @@ services:
     networks:
       - pipeline-net
     mem_limit: 1g
-  
-  jupyter:
-    build:
-      context: ./jupyter
-    container_name: jupyter
-    depends_on:
-      - spark-master
-      - minio
-    ports:
-      - "8888:8888"
-    volumes:
-      - ./analytics:/workspace
-    working_dir: /workspace
-    networks:
-      - pipeline-net
-    mem_limit: 2g
