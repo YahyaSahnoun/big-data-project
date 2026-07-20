@@ -139,7 +139,7 @@ services:
     container_name: spark-worker-1
     depends_on:
       - spark-master
-    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "-c", "2", "-m", "1500M"]
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "-c", "2", "-m", "3584M"]
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
@@ -147,7 +147,7 @@ services:
       SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
     networks:
       - pipeline-net
-    mem_limit: 2g
+    mem_limit: 4g
 
   # -----------------------------------------------------
   # NiFi - ingestion vers MinIO
