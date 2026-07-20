@@ -118,7 +118,9 @@ services:
   # Spark Master
   # -----------------------------------------------------
   spark-master:
-    image: apache/spark:3.5.1
+    
+    build: ./spark
+    image: spark-custom:3.5.1
     container_name: spark-master
     hostname: spark-master
 
@@ -155,7 +157,7 @@ services:
   # Spark Worker
   # -----------------------------------------------------
   spark-worker:
-    image: apache/spark:3.5.1
+    image: spark-custom:3.5.1
     container_name: spark-worker-1
     hostname: spark-worker-1
 
