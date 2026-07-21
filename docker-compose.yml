@@ -197,7 +197,8 @@ services:
   # Jupyter - Spark driver (runs notebooks inside Docker)
   # -----------------------------------------------------
   jupyter:
-    image: jupyter/pyspark-notebook:latest
+    build: ./spark-jupyter
+    image: spark-jupyter:3.5.1
     container_name: jupyter
     depends_on:
       - spark-master
@@ -212,12 +213,11 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      - ./analytics:/home/jovyan/work
-      - ./spark-extra-jars:/home/jovyan/jars
+      - ./analytics:/workspace
+      - ./spark-extra-jars:/workspace/jars
     networks:
       - pipeline-net
     mem_limit: 8g
-
   # -----------------------------------------------------
   # NiFi - ingestion vers MinIO
   # -----------------------------------------------------
