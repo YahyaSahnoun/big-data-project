@@ -1,6 +1,7 @@
 # Python virtual environment
 .venv/
-
+spark-extra-jars/
+*.jar
 # Python cache
 __pycache__/
 *.py[cod]
