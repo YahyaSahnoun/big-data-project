@@ -165,20 +165,20 @@ services:
       - spark-master
 
     command:
-      - /opt/spark/bin/spark-class
-      - org.apache.spark.deploy.worker.Worker
-      - spark://spark-master:7077
-      - -c
-      - "2"
-      - -m
-      - 3072M
+    - /opt/spark/bin/spark-class
+    - org.apache.spark.deploy.worker.Worker
+    - spark://spark-master:7077
+    - -c
+    - "2"
+    - -m
+    - 6144M
 
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
 
       SPARK_WORKER_CORES: "2"
-      SPARK_WORKER_MEMORY: 3G
+      SPARK_WORKER_MEMORY: 6G
 
       SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
       SPARK_HADOOP_FS_S3A_ACCESS_KEY: minioadmin
