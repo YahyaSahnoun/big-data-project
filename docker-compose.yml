@@ -87,26 +87,41 @@ services:
   # Hive Metastore - catalogue de tables pointant vers MinIO
   # -----------------------------------------------------
   hive-metastore:
-    image: bitsondatadev/hive-metastore:latest
+
+    build: ./hive
+    image: hive-postgres:4.0.0
+
     container_name: hive-metastore
+    hostname: hive-metastore
+
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+
+    command: >
+      /opt/hive/bin/hive --service metastore
+
     environment:
-      METASTORE_DB_HOSTNAME: postgres
-      HIVE_METASTORE_DB_TYPE: postgres
-      HIVE_METASTORE_URI: postgresql://admin:admin123@postgres:5432/hive_metastore
-      # Config S3A pour pointer vers MinIO au lieu de HDFS
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin123
-      S3_PATH_STYLE_ACCESS: "true"
+      SERVICE_NAME: metastore
+    DB_DRIVER: postgres
+
+    SERVICE_OPTS: >
+      -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+      -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/hive_metastore
+      -Djavax.jdo.option.ConnectionUserName=admin
+      -Djavax.jdo.option.ConnectionPassword=admin123
+
     ports:
       - "9083:9083"
+
+    volumes:
+      - ./conf/hive-site.xml:/opt/hive/conf/hive-site.xml
+
     networks:
       - pipeline-net
+
     mem_limit: 1g
 
   # -----------------------------------------------------
@@ -147,6 +162,8 @@ services:
 
     volumes:
       - ./analyse_data:/workspace
+      - spark-data:/opt/spark/work-dir
+      - ./conf/hive-site.xml:/opt/spark/conf/hive-site.xml
 
     networks:
       - pipeline-net
@@ -188,6 +205,8 @@ services:
 
     volumes:
       - ./analyse_data:/workspace
+      - spark-data:/opt/spark/work-dir
+      - ./conf/hive-site.xml:/opt/spark/conf/hive-site.xml
 
     networks:
       - pipeline-net
