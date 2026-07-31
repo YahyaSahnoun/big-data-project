@@ -302,27 +302,82 @@ services:
       - pipeline-net
     mem_limit: 1g
   
+  
   spark-thrift:
-    image: apache/spark:3.5.1
+    image: spark-custom:3.5.1
     container_name: spark-thrift
+
     depends_on:
       - spark-master
       - hive-metastore
-    command: >
-      /opt/spark/sbin/start-thriftserver.sh
-      --master spark://spark-master:7077
-      --hiveconf hive.server2.thrift.port=10000
-      --hiveconf hive.server2.thrift.bind.host=0.0.0.0
+
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+
+    command:
+      - --class
+      - org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+
+      - --name
+      - Spark Thrift Server
+
+      - --master
+      - spark://spark-master:7077
+
+      # ---------- Memory ----------
+      - --driver-memory
+      - 2g
+
+      - --executor-memory
+      - 4g
+
+      - --executor-cores
+      - "2"
+
+      # ---------- Stability ----------
+      - --conf
+      - spark.driver.maxResultSize=1g
+
+      - --conf
+      - spark.sql.shuffle.partitions=8
+
+      - --conf
+      - spark.default.parallelism=4
+
+      - --conf
+      - spark.sql.adaptive.enabled=true
+
+      - --conf
+      - spark.serializer=org.apache.spark.serializer.KryoSerializer
+
+      # ---------- Hive ----------
+      - spark-internal
+
+      - --hiveconf
+      - hive.server2.thrift.port=10000
+
+      - --hiveconf
+      - hive.server2.thrift.bind.host=0.0.0.0
+
     environment:
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin123
+
       SPARK_HADOOP_FS_S3A_ENDPOINT: http://minio:9000
+      SPARK_HADOOP_FS_S3A_ACCESS_KEY: minioadmin
+      SPARK_HADOOP_FS_S3A_SECRET_KEY: minioadmin123
       SPARK_HADOOP_FS_S3A_PATH_STYLE_ACCESS: "true"
+      SPARK_HADOOP_FS_S3A_IMPL: org.apache.hadoop.fs.s3a.S3AFileSystem
+
     ports:
       - "10000:10000"
+
     volumes:
       - ./conf/hive-site.xml:/opt/spark/conf/hive-site.xml
+
     networks:
       - pipeline-net
-    mem_limit: 1g
+
+    mem_limit: 6g
+
     restart: unless-stopped
