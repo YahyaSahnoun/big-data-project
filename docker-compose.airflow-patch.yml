@@ -1,0 +1,83 @@
+# docker-compose.airflow-patch.yml
+# ===================================
+# PAS un fichier à lancer seul -- ce sont les modifications à reporter dans
+# le docker-compose.yml existant (section 2.3 du GUIDE_MAITRE), sur les
+# services airflow-webserver ET airflow-scheduler. 3 changements par service :
+#
+#   1. `image: apache/airflow:2.9.1` -> `build:` (utilise Dockerfile.airflow,
+#      qui ajoute le client `docker` CLI)
+#   2. Volume du socket Docker de l'hôte (permet `docker cp`/`docker exec`
+#      depuis les tâches Airflow)
+#   3. Volume du dossier contenant les 4 scripts pipeline (SCRIPTS_DIR du DAG)
+#   4. `group_add` pour que l'utilisateur `airflow` (dans le conteneur) ait
+#      les droits d'écrire sur le socket Docker de l'hôte -- sinon
+#      `permission denied` même avec le socket monté.
+#
+# ── Avant de lancer, trouve le GID du groupe "docker" sur TON hôte : ──
+#   Linux natif :  getent group docker | cut -d: -f3
+#   WSL2         :  getent group docker | cut -d: -f3   (dans le terminal WSL, pas Windows)
+# Exporte-le avant `docker compose up` (ou mets-le directement dans un .env) :
+#   export DOCKER_GID=$(getent group docker | cut -d: -f3)
+
+services:
+
+  airflow-webserver:
+    # AVANT : image: apache/airflow:2.9.1
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://admin:admin123@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com || true &&
+      airflow webserver"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      # NOUVEAU : accès au démon Docker de l'hôte (docker cp / docker exec)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # NOUVEAU : les 4 scripts pipeline (build_dataset_final.py,
+      # clean_dataset.py, train_model.py, score_batch.py), lus par le DAG
+      # via SCRIPTS_DIR = "/opt/pipeline_scripts"
+      - ./pipeline_scripts:/opt/pipeline_scripts:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks:
+      - pipeline-net
+    mem_limit: 1g
+    restart: unless-stopped
+
+  airflow-scheduler:
+    # AVANT : image: apache/airflow:2.9.1
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-webserver:
+        condition: service_started
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://admin:admin123@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./pipeline_scripts:/opt/pipeline_scripts:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks:
+      - pipeline-net
+    mem_limit: 1g
+    restart: unless-stopped
