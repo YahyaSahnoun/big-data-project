@@ -1,0 +1,43 @@
+# Python env and caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment and packaging
+.env
+build/
+dist/
+*.egg-info/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Data and model artifacts
+**/xy_cache/
+**/*.csv
+**/*.parquet
+**/*.joblib
+**/*.pickle
+**/*.pkl
+**/*.npz
+**/*.npy
+**/*.jar
+**/models_checkpoint/
+**/models_checkpoint_undersampling/
+**/part-00000*
+
+# Spark and Hadoop artifacts
+spark-extra-jars/
+
+# Logs
+*.log
