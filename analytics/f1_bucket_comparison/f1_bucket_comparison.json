@@ -1,0 +1,280 @@
+{
+  "generated_at_utc": "2026-08-10T21:28:42.831816+00:00",
+  "protocol": {
+    "label_col": "label_eligibilite",
+    "group_col": "RADICAL",
+    "common_features_only": true,
+    "threshold_tuned_on_disjoint_validation": true,
+    "model": "LightGBM",
+    "seed": 42,
+    "pairing": {
+      "mode": "independent_population",
+      "paired_indices": false,
+      "comparison_strength": "limited",
+      "limitation": "The datasets cannot be paired: previous rows=3,172,296, candidate rows=3,179,148, previous_has_RADICAL=False, candidate_has_RADICAL=True. Each bucket is evaluated on its own repeated holdout splits with the same common feature protocol. Use this to discuss whether the F1 wall persists, not as a same-customer A/B claim."
+    }
+  },
+  "datasets": {
+    "previous_path": "s3a://processed-data/dataset_eligibilite_final",
+    "candidate_path": "s3a://processed-data/dataset_eligibilite_test",
+    "previous_rows": 3172296,
+    "candidate_rows": 3179148,
+    "previous_positive_rate": 0.04253291622219364,
+    "candidate_positive_rate": 0.04248087852468649,
+    "previous_identity_label_fingerprint": "bc635d74d65a0d40864feecd146211f8e0d52aa5b01671a775af5bfdfbe05abf",
+    "candidate_identity_label_fingerprint": "15b283078b1e3006a7da49f7234b6b83d7257bc791c4920fcc7fb8d93afe54d4"
+  },
+  "schema": {
+    "common_feature_count": 25,
+    "categorical_feature_count": 9,
+    "common_features": [
+      "BPR",
+      "CODE_VILLE",
+      "CUSTOMER_RATING",
+      "GENDER",
+      "MARITAL_STATUS",
+      "NOMBRE_ENFANT",
+      "TAILLE_ENTREPRI",
+      "age_client",
+      "depot_moyen",
+      "flux_cred_total",
+      "montant_moyen_gab",
+      "montant_total_gab",
+      "montant_total_payfac",
+      "montant_total_retraits",
+      "montant_total_vignette",
+      "nb_mois_avec_flux",
+      "nb_mois_observes_solde",
+      "nb_operations_gab",
+      "nb_paiements_digitaux",
+      "nb_retraits",
+      "nb_vignettes_payees",
+      "pack_actuel",
+      "pack_etat",
+      "solde_min",
+      "solde_moyen"
+    ]
+  },
+  "folds": [
+    {
+      "repeat": 1,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.2277255235480856,
+        "precision": 0.17274109275795552,
+        "recall": 0.3340580068185187,
+        "threshold": 0.35500000000000004
+      },
+      "candidate": {
+        "f1": 0.23646867854711745,
+        "precision": 0.18333626534230077,
+        "recall": 0.33296468332964685,
+        "threshold": 0.36000000000000004
+      }
+    },
+    {
+      "repeat": 2,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.23199049787191922,
+        "precision": 0.1935361342317347,
+        "recall": 0.2895152922575226,
+        "threshold": 0.385
+      },
+      "candidate": {
+        "f1": 0.23602408782102707,
+        "precision": 0.20097191477587162,
+        "recall": 0.2858864916726119,
+        "threshold": 0.39
+      }
+    },
+    {
+      "repeat": 3,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.22886572747009012,
+        "precision": 0.18469472885855137,
+        "recall": 0.3008053757596719,
+        "threshold": 0.375
+      },
+      "candidate": {
+        "f1": 0.23625980096501809,
+        "precision": 0.19151439222636435,
+        "recall": 0.30828824397442206,
+        "threshold": 0.375
+      }
+    },
+    {
+      "repeat": 4,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.2293963206571954,
+        "precision": 0.18214571075760877,
+        "recall": 0.3097485053609368,
+        "threshold": 0.37000000000000005
+      },
+      "candidate": {
+        "f1": 0.23652822256813968,
+        "precision": 0.19827127659574467,
+        "recall": 0.2930784540160692,
+        "threshold": 0.385
+      }
+    },
+    {
+      "repeat": 5,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.22889549508346674,
+        "precision": 0.18173631385536043,
+        "recall": 0.3091061811354316,
+        "threshold": 0.37000000000000005
+      },
+      "candidate": {
+        "f1": 0.23580691500875692,
+        "precision": 0.19624959056665575,
+        "recall": 0.29533691526593386,
+        "threshold": 0.385
+      }
+    },
+    {
+      "repeat": 6,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.23119124523935786,
+        "precision": 0.1895883738950298,
+        "recall": 0.2961855822916152,
+        "threshold": 0.38
+      },
+      "candidate": {
+        "f1": 0.2348947857032338,
+        "precision": 0.1930996104618809,
+        "recall": 0.29978031742897343,
+        "threshold": 0.38
+      }
+    },
+    {
+      "repeat": 7,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.23029501635008845,
+        "precision": 0.18038293584145113,
+        "recall": 0.31839517762735314,
+        "threshold": 0.36500000000000005
+      },
+      "candidate": {
+        "f1": 0.23354621591647864,
+        "precision": 0.19012188098314214,
+        "recall": 0.30267885906871855,
+        "threshold": 0.38
+      }
+    },
+    {
+      "repeat": 8,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.23011579876792546,
+        "precision": 0.19528033761088623,
+        "recall": 0.2800780670981768,
+        "threshold": 0.39
+      },
+      "candidate": {
+        "f1": 0.2348596467729282,
+        "precision": 0.19183520365102685,
+        "recall": 0.3027627035027134,
+        "threshold": 0.38
+      }
+    },
+    {
+      "repeat": 9,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.2290928402452566,
+        "precision": 0.18804191037773232,
+        "recall": 0.2930727802757053,
+        "threshold": 0.38
+      },
+      "candidate": {
+        "f1": 0.23680570658083597,
+        "precision": 0.1832489633259734,
+        "recall": 0.3345952457041717,
+        "threshold": 0.36000000000000004
+      }
+    },
+    {
+      "repeat": 10,
+      "previous_n_fit": 1776485,
+      "previous_n_tune": 444122,
+      "previous_n_test": 951689,
+      "candidate_n_fit": 1780322,
+      "candidate_n_tune": 445081,
+      "candidate_n_test": 953745,
+      "previous": {
+        "f1": 0.23063034273388192,
+        "precision": 0.1704293203608369,
+        "recall": 0.35658876426700925,
+        "threshold": 0.34500000000000003
+      },
+      "candidate": {
+        "f1": 0.23797509859462807,
+        "precision": 0.18858173944424395,
+        "recall": 0.32242460141171825,
+        "threshold": 0.37000000000000005
+      }
+    }
+  ],
+  "f1_difference_summary": {
+    "n_repeats": 10,
+    "paired": false,
+    "mean_difference_candidate_minus_previous": 0.006097035051089652,
+    "ci95_low": 0.004696390780603415,
+    "ci95_high": 0.007497679321575889,
+    "p_value_two_sided": 4.066862423963887e-06,
+    "practical_margin": 0.01,
+    "verdict": "practically equivalent within the pre-registered F1 margin"
+  }
+}

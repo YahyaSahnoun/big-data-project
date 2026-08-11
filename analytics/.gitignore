@@ -25,3 +25,5 @@ Thumbs.db
 .Trash-0/
 .ipynb_checkpoints/
 jars/
+dataset final parquet/
+features/
