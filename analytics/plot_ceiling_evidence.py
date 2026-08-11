@@ -81,6 +81,6 @@ ax2.annotate("Stagnation :\nPlus de lignes n'améliore\nplus la performance.",
             bbox=dict(facecolor='white', alpha=0.9, edgecolor='gray', boxstyle='round,pad=0.5'))
 
 plt.tight_layout()
-out_path = 'error_analysis_results/visuals/ceiling_evidence.png'
+out_path = 'ceiling_evidence.png'
 plt.savefig(out_path, dpi=200)
 print(f"Visual generated at: {out_path}")
