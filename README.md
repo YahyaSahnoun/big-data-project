@@ -1,77 +1,124 @@
-# Cluster Big Data - Éligibilité épargne (Docker Compose)
+# Big Data Cluster - Éligibilité Épargne (Savings Eligibility Prediction)
 
-Transposition en `docker-compose` de l'architecture Master/Workers décrite précédemment.
+![Apache Spark](https://img.shields.io/badge/Apache%20Spark-F05032?style=for-the-badge&logo=apache-spark&logoColor=white)
+![Apache Airflow](https://img.shields.io/badge/Apache%20Airflow-017CEE?style=for-the-badge&logo=Apache%20Airflow&logoColor=white)
+![Jupyter](https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=Jupyter&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2CA5E0?style=for-the-badge&logo=docker&logoColor=white)
+![Apache NiFi](https://img.shields.io/badge/Apache%20NiFi-72B961?style=for-the-badge&logo=Apache&logoColor=white)
 
-## ⚠️ Ce que change Docker Compose par rapport à Docker Swarm
+## 🎯 Project Overview
 
-Ton précédent cluster Hadoop tournait sur 3 **nœuds physiques/VMs distincts** orchestrés
-par Docker Swarm. `docker-compose` seul déploie tous les conteneurs sur **un seul hôte
-Docker** — il n'y a pas de vraie répartition multi-machines.
+This project implements an end-to-end Big Data & Machine Learning pipeline to predict **Savings Eligibility (Éligibilité Épargne)**. It is designed to process large volumes of client data, extract meaningful features, train distributed machine learning models, and score new clients in batch mode. 
 
-Ici, la séparation Master/Workers est donc **logique** (un service = un rôle), pas
-physique. C'est l'usage normal de Compose : environnement de développement/test local,
-avant un déploiement multi-nœuds réel.
+The entire infrastructure is containerized using `docker-compose`, providing a robust, logical separation of Master/Worker roles suitable for local development and easily transposable to Docker Swarm or Kubernetes for production.
 
-Deux chemins pour passer en vrai multi-nœuds ensuite, sans réécrire les fichiers :
-- **`docker stack deploy -c docker-compose.yml eligibilite`** en mode Swarm (le format
-  Compose reste compatible), en ajoutant des contraintes de placement
-  (`deploy.placement.constraints`) pour épingler `spark-master`/`nifi`/`airflow` sur le
-  nœud manager et `spark-worker-*` sur les nœuds workers — exactement ta topologie
-  précédente.
-- Kubernetes (Helm charts Airflow/Spark/Nifi officiels) si le volume ou la charge
-  dépasse ce que Swarm gère confortablement.
+---
 
-## Structure
+## 📊 Analytics & Machine Learning Pipeline (Core Focus)
 
-```
+The true value of this cluster lies in its robust analytics capabilities, powered by Apache Spark and Python's data science ecosystem. The machine learning workflow is designed to handle imbalanced datasets and high-cardinality categorical features natively in a distributed environment.
+
+### 1. Exploratory Data Analysis (EDA) & Prototyping
+The `analytics/` folder contains Jupyter notebooks used by data scientists to explore the data and prototype models before productionizing them:
+*   **EDA_advanced_eligibilite_v6.ipynb** & **EDA_visualisation.ipynb**: Deep dive into variable distributions, correlations, and business insights.
+*   **diagnostic_erreurs_eligibilite.ipynb**: Analysis of model misclassifications to iteratively improve feature engineering.
+*   **pipeline_v1_11_V2.ipynb**: Full interactive pipeline development, including multi-algorithm benchmarking (RandomForest, LightGBM, XGBoost, etc.).
+
+### 2. Distributed Data Preparation (`clean_dataset.py`)
+Data quality is handled at scale using PySpark. The pipeline cleans the raw data ingested by NiFi, handles missing values, and prepares a standardized `dataset_eligibilite_final` parquet file stored in MinIO (`processed-data` bucket).
+
+### 3. Model Training & Evaluation (`train_model.py`)
+The automated training script leverages **Spark MLlib** for distributed model training:
+*   **Feature Engineering**: Uses `StringIndexer`, `OneHotEncoder`, and `VectorAssembler` to handle both low and high-cardinality categorical variables (e.g., `CODE_VILLE`).
+*   **Class Imbalance Handling**: Automatically calculates and applies smoothed inverse-frequency class weights (square root strategy) to optimize for recall without sacrificing precision on the minority class.
+*   **Evaluation**: The data is split 80/20 to evaluate the **F1-Score** (focused on class 1 - eligible) before refitting on 100% of the dataset for production use.
+*   **Algorithms Supported**: Extensible to multiple classifiers like `RandomForest`, `LogisticRegression`, `DecisionTree`, and `NaiveBayes`.
+
+### 4. Batch Scoring (`score_batch.py`)
+A dedicated Spark job loads the serialized `PipelineModel` from MinIO (`ml-scoring` bucket) to score new, unseen client records in bulk, outputting the eligibility probabilities and final predictions.
+
+---
+
+## 🏗️ Architecture & Tech Stack
+
+The cluster simulates a modern Big Data Lakehouse architecture:
+
+*   **Ingestion**: **Apache NiFi** reads raw client data and pushes it to object storage.
+*   **Object Storage**: **MinIO** acts as the data lake (replacing HDFS), providing S3-compatible storage with buckets for `raw-data`, `processed-data`, and `ml-scoring`.
+*   **Data Catalog**: **Hive Metastore** (backed by Postgres) catalogs the structured data, allowing tools to query it seamlessly.
+*   **Compute Engine**: **Apache Spark** (Master + Worker) executes the heavy data processing and ML tasks.
+*   **Orchestration**: **Apache Airflow** (Webserver + Scheduler) triggers the data pipelines via DAGs (`pipeline_scoring_epargne_dag.py`).
+*   **BI / Querying**: **Spark Thrift Server** is exposed on port `10000`, enabling BI tools like Power BI or Tableau to query the processed Hive tables directly.
+
+---
+
+## 📁 Repository Structure
+
+```text
 bigdata-cluster/
-├── docker-compose.yml
-├── spark/
-│   ├── Dockerfile          # image Spark 3.5 + stack ML (même image master/workers)
-│   ├── requirements.txt    # pandas, numpy, scikit-learn, xgboost, lightgbm, mlflow
-│   └── jobs/
-│       └── train_model.py  # job spark-submit : feature engineering + entraînement
-├── mlflow/
-│   └── Dockerfile
-├── airflow/
-│   └── dags/
-│       └── eligibilite_pipeline_dag.py
-└── README.md
+├── analytics/                 # Jupyter notebooks for EDA, ML prototyping, and sample datasets
+├── pipeline_scripts/          # Production PySpark scripts (clean, train, score)
+├── dags/                      # Airflow DAGs for pipeline orchestration
+├── spark/                     # Spark 3.5 + ML Stack Docker build files
+├── airflow/                   # Custom Airflow Dockerfile (with extra dependencies)
+├── hive/                      # Hive Metastore build files
+├── minio-init/                # Scripts to auto-create S3 buckets
+├── pg-init-scripts/           # Postgres multi-database initialization scripts
+├── docker-compose.yml         # Main infrastructure definition
+└── README.md                  # Project documentation
 ```
 
-## Lancement
+---
 
-```bash
-cd bigdata-cluster
-docker compose up -d --build
-```
+## 🚀 Getting Started
 
-Le premier démarrage prend quelques minutes (build de l'image Spark + migrations Airflow).
+### Prerequisites
+*   Docker & Docker Compose installed.
+*   At least 16GB of RAM available (the cluster is optimized for this budget).
 
-## Accès aux UI
+### Launching the Cluster
 
-| Service       | URL                     | Identifiants        |
-|---------------|--------------------------|----------------------|
-| Airflow       | http://localhost:8080    | admin / admin        |
-| Nifi          | https://localhost:8443   | admin / ChangeMeNow123! |
-| Spark Master UI | http://localhost:8081  | -                     |
-| MLflow        | http://localhost:5000    | -                     |
+1.  Clone the repository and navigate to the directory:
+    ```bash
+    cd bigdata-cluster
+    ```
+2.  Start the cluster in detached mode (this will build the custom Spark and Airflow images on first run):
+    ```bash
+    docker compose up -d --build
+    ```
+    *Note: The first startup takes a few minutes as it builds images and runs database migrations.*
 
-## Configuration à faire une fois l'Airflow UI démarrée
+---
 
-Dans **Admin > Connections**, créer/éditer la connexion `spark_default` :
-- Conn Type : `Spark`
-- Host : `spark://spark-master`
-- Port : `7077`
+## 🌐 Accessing the Services
 
-## Points d'attention avant un usage production
+Once the cluster is up and running, you can access the various user interfaces:
 
-- `_PIP_ADDITIONAL_REQUIREMENTS` dans le service Airflow est pratique pour du dev
-  rapide mais réinstalle les paquets à chaque démarrage de conteneur : à remplacer par
-  une image Airflow custom (`FROM apache/airflow:2.9.3` + `pip install` figé) en prod.
-- Une seule instance Nifi ici : un vrai cluster Nifi multi-nœuds nécessite Zookeeper et
-  les variables `NIFI_CLUSTER_IS_NODE`, `NIFI_ZK_CONNECT_STRING`, etc.
-- `mlflow.db` en SQLite convient pour une démo ; en production, pointer
-  `--backend-store-uri` vers une base Postgres partagée.
-- Aucun mot de passe de ce fichier n'est destiné à être utilisé tel quel — à externaliser
-  via un `.env` ou un gestionnaire de secrets.
+| Service | URL | Default Credentials |
+| :--- | :--- | :--- |
+| **Apache Airflow** (Orchestration) | [http://localhost:8081](http://localhost:8081) | `admin` / `admin` |
+| **Jupyter Lab** (Analytics & EDA) | [http://localhost:8888](http://localhost:8888) | *(Check Docker logs for token if required)* |
+| **MinIO Console** (Storage Lake) | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin123` |
+| **Apache NiFi** (Ingestion) | [https://localhost:8443](https://localhost:8443) | `admin` / `admin12345678` |
+| **Spark Master UI** | [http://localhost:8080](http://localhost:8080) | - |
+| **Spark Thrift Server** (BI) | `jdbc:hive2://localhost:10000` | - |
+
+---
+
+## ⚙️ Configuration & Post-Launch Steps
+
+### 1. Airflow Spark Connection
+Once Airflow is started, configure the Spark connection to allow Airflow to trigger Spark jobs:
+1. Go to **Admin > Connections** in the Airflow UI.
+2. Edit or create the `spark_default` connection:
+   *   **Conn Type**: `Spark`
+   *   **Host**: `spark://spark-master`
+   *   **Port**: `7077`
+
+### 2. Path Configurations
+Ensure that the volume mounts in `docker-compose.yml` point to the correct local paths, especially for NiFi data ingestion (`~/Desktop/data_clients`).
+
+### 3. Production Readiness Warnings
+*   **Security**: Do not use the default passwords (`admin`, `minioadmin123`) in a production environment. Use a secrets manager or `.env` files.
+*   **Airflow Image**: The current Airflow setup installs packages dynamically. For production, bake these into the Docker image directly.
+*   **NiFi Cluster**: This is a single-node NiFi setup. True production clustering requires ZooKeeper.
